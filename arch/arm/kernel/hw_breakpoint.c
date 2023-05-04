@@ -688,6 +688,12 @@ static void disable_single_step(struct perf_event *bp)
 	arch_install_hw_breakpoint(bp);
 }
 
+static int watchpoint_fault_on_uaccess(struct pt_regs *regs,
+				       struct arch_hw_breakpoint *info)
+{
+	return !user_mode(regs) && info->ctrl.privilege == ARM_BREAKPOINT_USER;
+}
+
 static void watchpoint_handler(unsigned long addr, unsigned int fsr,
 			       struct pt_regs *regs)
 {
