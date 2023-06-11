@@ -57,7 +57,7 @@ ifeq ($(CONFIG_MTK_SENSOR_SUPPORT),y)
 obj-$(CONFIG_MTK_HWMON)	    += hwmon/
 obj-$(CONFIG_CUSTOM_KERNEL_ALSPS) += alsps/
 endif
-obj-$(CONFIG_MTK_COMBO) += connectivity/
+obj-y += connectivity/
 obj-$(CONFIG_MTK_BTIF) += btif/
 obj-$(CONFIG_MTK_CONN_MD) += conn_md/
 # for btmtk_btif repo sync from other repo

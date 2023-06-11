@@ -1,10 +1,5 @@
-ifneq ($(filter abc123_ftv abc123, $(KERNEL_5_4_TARGET_DEVICE)),)
-include $(dir $(abspath $(lastword $(MAKEFILE_LIST))))config/abc123.config
-else ifneq ($(filter abc123, $(KERNEL_5_4_TARGET_DEVICE)),)
-include $(dir $(abspath $(lastword $(MAKEFILE_LIST))))config/abc123.config
-else
-include $(dir $(abspath $(lastword $(MAKEFILE_LIST)))).config
-endif
+include $(srctree)/drivers/misc/mediatek/connectivity/wlan/config/sheldon.config
+
 #/***** Manage configs into compile options ******/
 ifneq ($(CFG_NUM_DIFFERENT_CHANNELS_STA),)
 ccflags-y += -DCFG_NUM_DIFFERENT_CHANNELS_STA=$(CFG_NUM_DIFFERENT_CHANNELS_STA)
@@ -118,11 +113,7 @@ endif
 # Compile Options
 # ---------------------------------------------------
 ccflags-y += $(WLAN_CHIP_LIST)
-
-#WLAN_CHIP_ID=$(MTK_COMBO_CHIP)
-ifeq ($(WLAN_CHIP_ID),)
-    WLAN_CHIP_ID := MT7663
-endif
+WLAN_CHIP_ID := MT7663
 
 ccflags-y += -DCFG_SUPPORT_DEBUG_FS=$(CFG_SUPPORT_DEBUG_FS)
 ifneq ($(TARGET_BUILD_VARIANT),user)
@@ -175,12 +166,8 @@ else
     ccflags-y += -DBUILD_QA_DBG=0
 endif
 
-ifeq ($(CONFIG_MTK_COMBO_WIFI),y)
-    ccflags-y += -DCFG_BUILT_IN_DRIVER=1
-	ccflags-y += -DCFG_WPS_DISCONNECT=1
-else
-    ccflags-y += -DCFG_BUILT_IN_DRIVER=0
-endif
+ccflags-y += -DCFG_BUILT_IN_DRIVER=1
+ccflags-y += -DCFG_WPS_DISCONNECT=1
 
 ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF), sdio)
 	ccflags-y += -D_HIF_SDIO=1
@@ -450,13 +437,6 @@ ifneq ($(PLATFORM_FLAGS), )
     ccflags-y += $(PLATFORM_FLAGS)
 endif
 
-ifeq ($(CONFIG_MTK_WIFI_ONLY),$(filter $(CONFIG_MTK_WIFI_ONLY),m y))
-obj-$(CONFIG_MTK_WIFI_ONLY) += $(MODULE_NAME).o
-else
-obj-$(CONFIG_MTK_COMBO_WIFI) += $(MODULE_NAME).o
-#obj-y += $(MODULE_NAME).o
-endif
-
 ifneq ($(CFG_CHIP_RESET_SUPPORT),)
 ccflags-y += -DCFG_CHIP_RESET_SUPPORT=$(CFG_CHIP_RESET_SUPPORT)
 endif
@@ -480,9 +460,6 @@ else
 ccflags-y += -DCFG_SUPPORT_MTK_CPU_SCHED=0
 endif
 
-DRIVER_BUILD_DATE=$(shell date +%Y%m%d%H%M%S)
-ccflags-y += -DDRIVER_BUILD_DATE='"$(DRIVER_BUILD_DATE)"'
-
 ifneq ($(CFG_TC10_FEATURE),)
 ccflags-y += -DCFG_TC10_FEATURE=$(CFG_TC10_FEATURE)
 endif
@@ -498,8 +475,6 @@ endif
 ifneq ($(CFG_MTK_ANDROID_EMI),)
 ccflags-y += -DCFG_MTK_ANDROID_EMI=$(CFG_MTK_ANDROID_EMI)
 endif
-
-ccflags-y += -DCFG_MTK_EMI=0
 
 ccflags-y += -DCFG_MTK_EMI=0
 
@@ -705,73 +680,13 @@ $(MODULE_NAME)-objs  += $(HIF_OBJS)
 $(MODULE_NAME)-objs  += $(MGMT_OBJS)
 $(MODULE_NAME)-objs  += $(CHIPS_OBJS)
 
-ifneq ($(filter abc123_ftv abc123 abc123, $(KERNEL_5_4_TARGET_DEVICE)),)
-#Default enable prealloc memory
-CFG_MTK_PREALLOC_DRIVER := y
-endif
-#
-# mtprealloc
-#
-ifeq ($(CFG_MTK_PREALLOC_DRIVER), y)
+ifeq ($(CONFIG_MTK_PREALLOC_DRIVER), y)
 ccflags-y += -DCFG_PREALLOC_MEMORY
 ccflags-y += -I$(src)/prealloc/include
-MODULE_NAME_PREALLOC = $(MODULE_NAME)_prealloc
 PREALLOC_OBJS := prealloc/prealloc.o
 PREALLOC_OBJS += prealloc/chip_reset_info.o
-$(MODULE_NAME_PREALLOC)-objs += $(PREALLOC_OBJS)
-obj-m += $(MODULE_NAME_PREALLOC).o
+$(MODULE_NAME)-objs += $(PREALLOC_OBJS)
 endif
 
-ifeq ($(CFG_PLATFORM_YOCTO), y)
-ccflags-y += -Wno-vla
-ccflags-y += -Wno-implicit-function-declaration
-ccflags-y += -Wno-implicit-fallthrough
-ccflags-y += -Wno-misleading-indentation
-ccflags-y += -D_FORTIFY_SOURCE=0
-ifeq ($(CFG_SUPPORT_EMPTY_MAC), y)
-ccflags-y += -DCFG_SUPPORT_EMPTY_MAC
-endif
-else
-ccflags-y += -Werror
-endif
-
-
-
-ifneq ($(filter abc123_ftv abc123, $(KERNEL_5_4_TARGET_DEVICE)),)
-CONFIGS_BUILD := -Wno-sometimes-uninitialized -Wno-vla
-
-modules:
-	$(MAKE) -C $(KERNEL_SRC) M=$(M) modules "EXTRA_CFLAGS+=-I$(INCLUDE) $(CONFIGS_BUILD) $(EXTRA_INCLUDE) $(KBUILD_CFLAGS_MODULE)" $(CONFIGS)
-	$(abspath ${OUT_DIR}/../../..)/kernel/amlogic/pop1/5.4/prebuilts/clang/host/linux-x86/clang-r377782b/bin/llvm-strip -g $(M)/$(MODULE_NAME).ko || :
-
-modules_install:
-	$(MAKE) INSTALL_MOD_STRIP=1 M=$(M) -C $(KERNEL_SRC) modules_install
-	mkdir -p ${OUT_DIR}/../vendor_lib/modules
-	cd $(M)/; find -name "*.ko" -exec cp {} ${OUT_DIR}/../vendor_lib/modules/ \;
-
-all: modules
-
-clean:
-	$(MAKE) -C $(KERNEL_SRC) M=$(M) clean
-
-else ifneq ($(filter abc123, $(KERNEL_5_4_TARGET_DEVICE)),)
-CONFIGS_BUILD := -Wno-sometimes-uninitialized -Wno-vla
-
-modules:
-	$(MAKE) -C $(KERNEL_SRC) M=$(M) modules "EXTRA_CFLAGS+=-I$(INCLUDE) $(CONFIGS_BUILD) $(EXTRA_INCLUDE) $(KBUILD_CFLAGS_MODULE)" $(CONFIGS)
-	$(abspath ${OUT_DIR}/../../..)/kernel/amlogic/pop1r/5.4/prebuilts/clang/host/linux-x86/clang-r377782b/bin/llvm-strip -g $(M)/$(MODULE_NAME).ko || :
-
-modules_install:
-	$(MAKE) INSTALL_MOD_STRIP=1 M=$(M) -C $(KERNEL_SRC) modules_install
-	mkdir -p ${OUT_DIR}/../vendor_lib/modules
-	cd $(M)/; find -name "*.ko" -exec cp {} ${OUT_DIR}/../vendor_lib/modules/ \;
-
-all: modules
-
-clean:
-	$(MAKE) -C $(KERNEL_SRC) M=$(M) clean
-else
-# TODO: MTK
-ccflags-y += -Wno-vla
-#ccflags-y += -Wno-vla -Wno-address
-endif
+obj-y += $(MODULE_NAME).o
+ccflags-y += -Werror -Wno-sometimes-uninitialized -Wno-vla
