@@ -28,10 +28,10 @@ endif
     subdir-ccflags-y += -D MTK_WCN_WMT_STP_EXP_SYMBOL_ABSTRACT
     obj-$(CONFIG_MTK_COMBO_COMM) += common/
 
-#ifeq ($(CONFIG_MTK_COMBO_WIFI),y)
-#    obj-$(CONFIG_MTK_COMBO_BT_MT7668_SDIO) += bt_mt7668_sdio/
-#    obj-$(CONFIG_MTK_COMBO_WIFI) += wlan/
-#endif
+ifeq ($(CONFIG_MTK_COMBO_WIFI),y)
+    obj-$(CONFIG_MTK_COMBO_BT_MT7663_SDIO) += bt_mt7663_sdio/
+    obj-$(CONFIG_MTK_COMBO_WIFI) += wlan/
+endif
     obj-$(CONFIG_MTK_COMBO_GPS) += gps/
     obj-n := dummy.o
 
