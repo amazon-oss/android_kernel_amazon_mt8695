@@ -129,10 +129,10 @@ _c_flags += $(if $(patsubst n%,, \
 		$(CFLAGS_KASAN), $(CFLAGS_KASAN_NOSANITIZE))
 endif
 
-ifeq ($(CONFIG_KCOV),y)
+ifeq ($(CONFIG_UBSAN),y)
 _c_flags += $(if $(patsubst n%,, \
-	$(KCOV_INSTRUMENT_$(basetarget).o)$(KCOV_INSTRUMENT)y), \
-	$(CFLAGS_KCOV))
+		$(UBSAN_SANITIZE_$(basetarget).o)$(UBSAN_SANITIZE)$(CONFIG_UBSAN_SANITIZE_ALL)), \
+		$(CFLAGS_UBSAN))
 endif
 
 # If building the kernel in a separate objtree expand all occurrences

@@ -545,7 +545,7 @@ static int __init genpd_poweroff_unused(void)
 
 	return 0;
 }
-late_initcall(genpd_poweroff_unused);
+late_initcall_sync(genpd_poweroff_unused);
 
 #ifdef CONFIG_PM_SLEEP
 
