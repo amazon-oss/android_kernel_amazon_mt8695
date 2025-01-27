@@ -392,7 +392,7 @@ static void exit_mm(struct task_struct *tsk)
 	struct mm_struct *mm = tsk->mm;
 	struct core_state *core_state;
 
-	exit_mm_release(tsk, mm);
+	mm_release(tsk, mm);
 	if (!mm)
 		return;
 	sync_mm_rss(mm);
@@ -411,10 +411,7 @@ static void exit_mm(struct task_struct *tsk)
 		up_read(&mm->mmap_sem);
 
 		self.task = tsk;
-		if (self.task->flags & PF_SIGNALED)
-			self.next = xchg(&core_state->dumper.next, &self);
-		else
-			self.task = NULL;
+		self.next = xchg(&core_state->dumper.next, &self);
 		/*
 		 * Implies mb(), the result of xchg() must be visible
 		 * to core_state->dumper.
@@ -441,12 +438,8 @@ static void exit_mm(struct task_struct *tsk)
 	task_unlock(tsk);
 	mm_update_next_owner(mm);
 	mmput(mm);
-#ifdef CONFIG_ANDROID_SIMPLE_LMK
-	clear_thread_flag(TIF_MEMDIE);
-#else
 	if (test_thread_flag(TIF_MEMDIE))
 		exit_oom_victim();
-#endif
 }
 
 static struct task_struct *find_alive_thread(struct task_struct *p)
@@ -460,14 +453,12 @@ static struct task_struct *find_alive_thread(struct task_struct *p)
 	return NULL;
 }
 
-static struct task_struct *find_child_reaper(struct task_struct *father,
-						struct list_head *dead)
+static struct task_struct *find_child_reaper(struct task_struct *father)
 	__releases(&tasklist_lock)
 	__acquires(&tasklist_lock)
 {
 	struct pid_namespace *pid_ns = task_active_pid_ns(father);
 	struct task_struct *reaper = pid_ns->child_reaper;
-	struct task_struct *p, *n;
 
 	if (likely(reaper != father))
 		return reaper;
@@ -483,12 +474,6 @@ static struct task_struct *find_child_reaper(struct task_struct *father,
 		panic("Attempted to kill init! exitcode=0x%08x\n",
 			father->signal->group_exit_code ?: father->exit_code);
 	}
-
-	list_for_each_entry_safe(p, n, dead, ptrace_entry) {
-		list_del_init(&p->ptrace_entry);
-		release_task(p);
-	}
-
 	zap_pid_ns_processes(pid_ns);
 	write_lock_irq(&tasklist_lock);
 
@@ -575,7 +560,7 @@ static void forget_original_parent(struct task_struct *father,
 		exit_ptrace(father, dead);
 
 	/* Can drop and reacquire tasklist_lock */
-	reaper = find_child_reaper(father, dead);
+	reaper = find_child_reaper(father);
 	if (list_empty(&father->children))
 		return;
 
@@ -616,7 +601,6 @@ static void exit_notify(struct task_struct *tsk, int group_dead)
 	if (group_dead)
 		kill_orphaned_pgrp(tsk->group_leader, NULL);
 
-	tsk->exit_state = EXIT_ZOMBIE;
 	if (unlikely(tsk->ptrace)) {
 		int sig = thread_group_leader(tsk) &&
 				thread_group_empty(tsk) &&
@@ -704,7 +688,16 @@ void do_exit(long code)
 	 */
 	if (unlikely(tsk->flags & PF_EXITING)) {
 		pr_alert("Fixing recursive fault but reboot is needed!\n");
-		futex_exit_recursive(tsk);
+		/*
+		 * We can do this unlocked here. The futex code uses
+		 * this flag just to verify whether the pi state
+		 * cleanup has been done or not. In the worst case it
+		 * loops once more. We pretend that the cleanup was
+		 * done as there is no way to return. Either the
+		 * OWNER_DIED bit is set by now or we push the blocked
+		 * task into the wait for ever nirwana as well.
+		 */
+		tsk->flags |= PF_EXITPIDONE;
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		schedule();
 	}
@@ -712,6 +705,13 @@ void do_exit(long code)
 	exit_signals(tsk);  /* sets PF_EXITING */
 
 	schedtune_exit_task(tsk);
+
+	/*
+	 * tsk->flags are checked in the futex code to protect against
+	 * an exiting task cleaning up the robust pi futexes.
+	 */
+	smp_mb();
+	raw_spin_unlock_wait(&tsk->pi_lock);
 
 	if (unlikely(in_atomic())) {
 		pr_info("note: %s[%d] exited with preempt_count %d\n",
@@ -789,6 +789,12 @@ void do_exit(long code)
 	 * Make sure we are holding no locks:
 	 */
 	debug_check_no_locks_held();
+	/*
+	 * We can do this unlocked here. The futex code uses this flag
+	 * just to verify whether the pi state cleanup has been done
+	 * or not. In the worst case it loops once more.
+	 */
+	tsk->flags |= PF_EXITPIDONE;
 
 	if (tsk->io_context)
 		exit_io_context(tsk);

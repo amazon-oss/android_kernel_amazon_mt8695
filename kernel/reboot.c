@@ -17,6 +17,9 @@
 #include <linux/syscore_ops.h>
 #include <linux/uaccess.h>
 
+#ifdef CONFIG_AMAZON_SIGN_OF_LIFE
+#include <linux/sign_of_life.h>
+#endif
 /*
  * this indicates whether you can reboot with ctrl-alt-del: the default is yes
  */
@@ -331,12 +334,18 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 		panic("cannot halt");
 
 	case LINUX_REBOOT_CMD_POWER_OFF:
+#ifdef CONFIG_AMAZON_SIGN_OF_LIFE
+		life_cycle_set_shutdown_reason(SHUTDOWN_BY_SW);
+#endif
 		kernel_restart(NULL);
 		// kernel_power_off();
 		// do_exit(0);
 		break;
 
 	case LINUX_REBOOT_CMD_RESTART2:
+#ifdef CONFIG_AMAZON_SIGN_OF_LIFE
+		life_cycle_set_boot_reason(WARMBOOT_BY_SW);
+#endif
 		ret = strncpy_from_user(&buffer[0], arg, sizeof(buffer) - 1);
 		if (ret < 0) {
 			ret = -EFAULT;
@@ -513,22 +522,22 @@ static int __init reboot_setup(char *str)
 			break;
 
 		case 's':
-			if (isdigit(*(str+1)))
-				reboot_cpu = simple_strtoul(str+1, NULL, 0);
-			else if (str[1] == 'm' && str[2] == 'p' &&
-							isdigit(*(str+3)))
-				reboot_cpu = simple_strtoul(str+3, NULL, 0);
-			else
-				reboot_mode = REBOOT_SOFT;
-			if (reboot_cpu >= num_possible_cpus()) {
-				pr_err("Ignoring the CPU number in reboot= option. "
-				       "CPU %d exceeds possible cpu number %d\n",
-				       reboot_cpu, num_possible_cpus());
-				reboot_cpu = 0;
-				break;
-			}
-			break;
+		{
+			int rc;
 
+			if (isdigit(*(str+1))) {
+				rc = kstrtoint(str+1, 0, &reboot_cpu);
+				if (rc)
+					return rc;
+			} else if (str[1] == 'm' && str[2] == 'p' &&
+				   isdigit(*(str+3))) {
+				rc = kstrtoint(str+3, 0, &reboot_cpu);
+				if (rc)
+					return rc;
+			} else
+				reboot_mode = REBOOT_SOFT;
+			break;
+		}
 		case 'g':
 			reboot_mode = REBOOT_GPIO;
 			break;

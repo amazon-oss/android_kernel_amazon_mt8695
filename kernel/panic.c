@@ -28,6 +28,10 @@
 #define PANIC_TIMER_STEP 100
 #define PANIC_BLINK_SPD 18
 
+#ifdef CONFIG_AMAZON_SIGN_OF_LIFE
+#include <linux/sign_of_life.h>
+#endif
+
 int panic_on_oops = CONFIG_PANIC_ON_OOPS_VALUE;
 static unsigned long tainted_mask;
 static int pause_on_oops;
@@ -84,7 +88,6 @@ void panic(const char *fmt, ...)
 	 * after the panic_lock is acquired) from invoking panic again.
 	 */
 	local_irq_disable();
-	preempt_disable_notrace();
 
 	/*
 	 * It's possible to come here directly from a panic-assertion and
@@ -105,6 +108,9 @@ void panic(const char *fmt, ...)
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
 	pr_emerg("Kernel panic - not syncing: %s\n", buf);
+#ifdef CONFIG_AMAZON_SIGN_OF_LIFE
+       life_cycle_set_boot_reason(WARMBOOT_BY_KERNEL_PANIC);
+#endif
 
 #ifdef CONFIG_DEBUG_BUGVERBOSE
 	/*

@@ -1048,6 +1048,15 @@ static void cpuset_change_task_nodemask(struct task_struct *tsk,
 {
 	bool need_loop;
 
+	/*
+	 * Allow tasks that have access to memory reserves because they have
+	 * been OOM killed to get memory anywhere.
+	 */
+	if (unlikely(test_thread_flag(TIF_MEMDIE)))
+		return;
+	if (current->flags & PF_EXITING) /* Let dying task have memory */
+		return;
+
 	task_lock(tsk);
 	/*
 	 * Determine if a loop is necessary if another thread is doing
@@ -2093,7 +2102,7 @@ static void cpuset_bind(struct cgroup_subsys_state *root_css)
  * which could have been changed by cpuset just after it inherits the
  * state from the parent and before it sits on the cgroup's task list.
  */
-void cpuset_fork(struct task_struct *task)
+void cpuset_fork(struct task_struct *task, void *priv)
 {
 	if (task_css_is_root(task, cpuset_cgrp_id))
 		return;
@@ -2746,7 +2755,7 @@ void __cpuset_memory_pressure_bump(void)
 int proc_cpuset_show(struct seq_file *m, struct pid_namespace *ns,
 		     struct pid *pid, struct task_struct *tsk)
 {
-	char *buf;
+	char *buf, *p;
 	struct cgroup_subsys_state *css;
 	int retval;
 
@@ -2756,19 +2765,19 @@ int proc_cpuset_show(struct seq_file *m, struct pid_namespace *ns,
 		goto out;
 
 	retval = -ENAMETOOLONG;
-	css = task_get_css(tsk, cpuset_cgrp_id);
-	retval = cgroup_path_ns(css->cgroup, buf, PATH_MAX,
-				current->nsproxy->cgroup_ns);
-	css_put(css);
-	if (retval >= PATH_MAX)
+	rcu_read_lock();
+	css = task_css(tsk, cpuset_cgrp_id);
+	p = cgroup_path(css->cgroup, buf, PATH_MAX);
+	rcu_read_unlock();
+	if (!p)
 		goto out_free;
-	seq_puts(m, buf);
+	seq_puts(m, p);
 	seq_putc(m, '\n');
 	retval = 0;
 out_free:
 	kfree(buf);
 out:
-	return 0;
+	return retval;
 }
 #endif /* CONFIG_PROC_PID_CPUSET */
 

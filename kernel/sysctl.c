@@ -126,15 +126,10 @@ static int zero;
 static int __maybe_unused one = 1;
 static int __maybe_unused two = 2;
 static int __maybe_unused four = 4;
-static unsigned long zero_ul;
 static unsigned long one_ul = 1;
-static unsigned long long_max = LONG_MAX;
 static int one_hundred = 100;
 #ifdef CONFIG_PRINTK
 static int ten_thousand = 10000;
-#endif
-#ifdef CONFIG_PERF_EVENTS
-static int six_hundred_forty_kb = 640 * 1024;
 #endif
 
 /* this is needed for the proc_doulongvec_minmax of vm_dirty_bytes */
@@ -220,28 +215,6 @@ static int sysrq_sysctl_handler(struct ctl_table *table, int write,
 	return 0;
 }
 
-#endif
-
-#ifdef CONFIG_BPF_SYSCALL
-static int bpf_unpriv_handler(struct ctl_table *table, int write,
-                             void *buffer, size_t *lenp, loff_t *ppos)
-{
-	int ret, unpriv_enable = *(int *)table->data;
-	bool locked_state = unpriv_enable == 1;
-	struct ctl_table tmp = *table;
-
-	if (write && !capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	tmp.data = &unpriv_enable;
-	ret = proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
-	if (write && !ret) {
-		if (locked_state && unpriv_enable != 1)
-			return -EPERM;
-		*(int *)table->data = unpriv_enable;
-	}
-	return ret;
-}
 #endif
 
 static struct ctl_table kern_table[];
@@ -482,7 +455,7 @@ static struct ctl_table kern_table[] = {
 	},
 	{
 		.procname	= "sched_rr_timeslice_ms",
-		.data		= &sysctl_sched_rr_timeslice,
+		.data		= &sched_rr_timeslice,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= sched_rr_handler,
@@ -1221,15 +1194,6 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &zero,
 		.extra2		= &one_hundred,
 	},
-	{
-		.procname	= "perf_event_max_stack",
-		.data		= NULL, /* filled in by handler */
-		.maxlen		= sizeof(sysctl_perf_event_max_stack),
-		.mode		= 0644,
-		.proc_handler	= perf_event_max_stack_handler,
-		.extra1		= &zero,
-		.extra2		= &six_hundred_forty_kb,
-	},
 #endif
 #ifdef CONFIG_KMEMCHECK
 	{
@@ -1266,9 +1230,10 @@ static struct ctl_table kern_table[] = {
 		.data		= &sysctl_unprivileged_bpf_disabled,
 		.maxlen		= sizeof(sysctl_unprivileged_bpf_disabled),
 		.mode		= 0644,
-		.proc_handler	= bpf_unpriv_handler,
-		.extra1		= &zero,
-		.extra2		= &two,
+		/* only handle a transition from default "0" to "1" */
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &one,
+		.extra2		= &one,
 	},
 #endif
 	{ }
@@ -1450,7 +1415,7 @@ static struct ctl_table vm_table[] = {
 		.procname	= "drop_caches",
 		.data		= &sysctl_drop_caches,
 		.maxlen		= sizeof(int),
-		.mode		= 0200,
+		.mode		= 0644,
 		.proc_handler	= drop_caches_sysctl_handler,
 		.extra1		= &one,
 		.extra2		= &four,
@@ -1728,8 +1693,6 @@ static struct ctl_table fs_table[] = {
 		.maxlen		= sizeof(files_stat.max_files),
 		.mode		= 0644,
 		.proc_handler	= proc_doulongvec_minmax,
-		.extra1		= &zero_ul,
-		.extra2		= &long_max,
 	},
 	{
 		.procname	= "nr_open",
@@ -1841,24 +1804,6 @@ static struct ctl_table fs_table[] = {
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &zero,
 		.extra2		= &one,
-	},
-	{
-		.procname	= "protected_fifos",
-		.data		= &sysctl_protected_fifos,
-		.maxlen		= sizeof(int),
-		.mode		= 0600,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
-		.extra2		= &two,
-	},
-	{
-		.procname	= "protected_regular",
-		.data		= &sysctl_protected_regular,
-		.maxlen		= sizeof(int),
-		.mode		= 0600,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
-		.extra2		= &two,
 	},
 	{
 		.procname	= "suid_dumpable",
@@ -2433,16 +2378,7 @@ static int do_proc_dointvec_minmax_conv(bool *negp, unsigned long *lvalp,
 {
 	struct do_proc_dointvec_minmax_conv_param *param = data;
 	if (write) {
-		int val;
-		if (*negp) {
-			if (*lvalp > (unsigned long) INT_MAX + 1)
-				return -EINVAL;
-			val = -*lvalp;
-		} else {
-			if (*lvalp > (unsigned long) INT_MAX)
-				return -EINVAL;
-			val = *lvalp;
-		}
+		int val = *negp ? -*lvalp : *lvalp;
 		if ((param->min && *param->min > val) ||
 		    (param->max && *param->max < val))
 			return -EINVAL;
@@ -2584,10 +2520,8 @@ static int __do_proc_doulongvec_minmax(void *data, struct ctl_table *table, int 
 			if (neg)
 				continue;
 			val = convmul * val / convdiv;
-			if ((min && val < *min) || (max && val > *max)) {
-				err = -EINVAL;
-				break;
-			}
+			if ((min && val < *min) || (max && val > *max))
+				continue;
 			*i = val;
 		} else {
 			val = convdiv * (*i) / convmul;
