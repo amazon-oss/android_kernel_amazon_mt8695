@@ -336,9 +336,9 @@ static struct rt6_info *__ip6_dst_alloc(struct net *net,
 	return rt;
 }
 
-struct rt6_info *ip6_dst_alloc(struct net *net,
-			       struct net_device *dev,
-			       int flags)
+static struct rt6_info *ip6_dst_alloc(struct net *net,
+				      struct net_device *dev,
+				      int flags)
 {
 	struct rt6_info *rt = __ip6_dst_alloc(net, dev, flags);
 
@@ -362,7 +362,6 @@ struct rt6_info *ip6_dst_alloc(struct net *net,
 
 	return rt;
 }
-EXPORT_SYMBOL(ip6_dst_alloc);
 
 static void ip6_dst_destroy(struct dst_entry *dst)
 {
@@ -523,7 +522,7 @@ static void rt6_probe_deferred(struct work_struct *w)
 		container_of(w, struct __rt6_probe_work, work);
 
 	addrconf_addr_solict_mult(&work->target, &mcaddr);
-	ndisc_send_ns(work->dev, &work->target, &mcaddr, NULL);
+	ndisc_send_ns(work->dev, &work->target, &mcaddr, NULL, 0);
 	dev_put(work->dev);
 	kfree(work);
 }
@@ -1418,12 +1417,8 @@ EXPORT_SYMBOL_GPL(ip6_update_pmtu);
 
 void ip6_sk_update_pmtu(struct sk_buff *skb, struct sock *sk, __be32 mtu)
 {
-	int oif = sk->sk_bound_dev_if;
-
-	if (!oif && skb->dev)
-		oif = l3mdev_master_ifindex(skb->dev);
-
-	ip6_update_pmtu(skb, sock_net(sk), mtu, oif, sk->sk_mark, sk->sk_uid);
+	ip6_update_pmtu(skb, sock_net(sk), mtu,
+			sk->sk_bound_dev_if, sk->sk_mark, sk->sk_uid);
 }
 EXPORT_SYMBOL_GPL(ip6_sk_update_pmtu);
 
@@ -1767,37 +1762,6 @@ static int ip6_convert_metrics(struct mx6_config *mxc,
 	return -EINVAL;
 }
 
-static struct rt6_info *ip6_nh_lookup_table(struct net *net,
-					    struct fib6_config *cfg,
-					    const struct in6_addr *gw_addr)
-{
-	struct flowi6 fl6 = {
-		.flowi6_oif = cfg->fc_ifindex,
-		.daddr = *gw_addr,
-		.saddr = cfg->fc_prefsrc,
-	};
-	struct fib6_table *table;
-	struct rt6_info *rt;
-	int flags = 0;
-
-	table = fib6_get_table(net, cfg->fc_table);
-	if (!table)
-		return NULL;
-
-	if (!ipv6_addr_any(&cfg->fc_prefsrc))
-		flags |= RT6_LOOKUP_F_HAS_SADDR;
-
-	rt = ip6_pol_route(net, table, cfg->fc_ifindex, &fl6, flags);
-
-	/* if table lookup failed, fall back to full lookup */
-	if (rt == net->ipv6.ip6_null_entry) {
-		ip6_rt_put(rt);
-		rt = NULL;
-	}
-
-	return rt;
-}
-
 static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg)
 {
 	struct net *net = cfg->fc_nlinfo.nl_net;
@@ -1973,7 +1937,7 @@ static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg)
 		rt->rt6i_gateway = *gw_addr;
 
 		if (gwa_type != (IPV6_ADDR_LINKLOCAL|IPV6_ADDR_UNICAST)) {
-			struct rt6_info *grt = NULL;
+			struct rt6_info *grt;
 
 			/* IPv6 strictly inhibits using not link-local
 			   addresses as nexthop address.
@@ -1985,12 +1949,7 @@ static struct rt6_info *ip6_route_info_create(struct fib6_config *cfg)
 			if (!(gwa_type & IPV6_ADDR_UNICAST))
 				goto out;
 
-			if (cfg->fc_table)
-				grt = ip6_nh_lookup_table(net, cfg, gw_addr);
-
-			if (!grt)
-				grt = rt6_lookup(net, gw_addr, NULL,
-						 cfg->fc_ifindex, 1);
+			grt = rt6_lookup(net, gw_addr, NULL, cfg->fc_ifindex, 1);
 
 			err = -EHOSTUNREACH;
 			if (!grt)
@@ -2980,11 +2939,8 @@ static int ip6_route_multipath_add(struct fib6_config *cfg)
 		 * nexthops have been replaced by first new, the rest should
 		 * be added to it.
 		 */
-		if (cfg->fc_nlinfo.nlh) {
-			cfg->fc_nlinfo.nlh->nlmsg_flags &= ~(NLM_F_EXCL |
-							     NLM_F_REPLACE);
-			cfg->fc_nlinfo.nlh->nlmsg_flags |= NLM_F_CREATE;
-		}
+		cfg->fc_nlinfo.nlh->nlmsg_flags &= ~(NLM_F_EXCL |
+						     NLM_F_REPLACE);
 		nhn++;
 	}
 
@@ -3127,7 +3083,7 @@ static int rt6_fill_node(struct net *net,
 		table = rt->rt6i_table->tb6_id;
 	else
 		table = RT6_TABLE_UNSPEC;
-	rtm->rtm_table = table < 256 ? table : RT_TABLE_COMPAT;
+	rtm->rtm_table = table;
 	if (nla_put_u32(skb, RTA_TABLE, table))
 		goto nla_put_failure;
 	if (rt->rt6i_flags & RTF_REJECT) {
