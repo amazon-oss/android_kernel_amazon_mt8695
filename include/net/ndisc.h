@@ -31,11 +31,11 @@ enum {
 	ND_OPT_PREFIX_INFO = 3,		/* RFC2461 */
 	ND_OPT_REDIRECT_HDR = 4,	/* RFC2461 */
 	ND_OPT_MTU = 5,			/* RFC2461 */
+	ND_OPT_NONCE = 14,              /* RFC7527 */
 	__ND_OPT_ARRAY_MAX,
 	ND_OPT_ROUTE_INFO = 24,		/* RFC4191 */
 	ND_OPT_RDNSS = 25,		/* RFC5006 */
 	ND_OPT_DNSSL = 31,		/* RFC6106 */
-	ND_OPT_CAPTIVE_PORTAL = 37,	/* RFC7710 */
 	__ND_OPT_MAX
 };
 
@@ -108,6 +108,7 @@ struct ndisc_options {
 #define nd_opts_pi_end		nd_opt_array[__ND_OPT_PREFIX_INFO_END]
 #define nd_opts_rh		nd_opt_array[ND_OPT_REDIRECT_HDR]
 #define nd_opts_mtu		nd_opt_array[ND_OPT_MTU]
+#define nd_opts_nonce		nd_opt_array[ND_OPT_NONCE]
 
 #define NDISC_OPT_SPACE(len) (((len)+2+7)&~7)
 
@@ -182,7 +183,8 @@ void ndisc_cleanup(void);
 int ndisc_rcv(struct sk_buff *skb);
 
 void ndisc_send_ns(struct net_device *dev, const struct in6_addr *solicit,
-		   const struct in6_addr *daddr, const struct in6_addr *saddr);
+		   const struct in6_addr *daddr, const struct in6_addr *saddr,
+		   u64 nonce);
 
 void ndisc_send_rs(struct net_device *dev,
 		   const struct in6_addr *saddr, const struct in6_addr *daddr);
