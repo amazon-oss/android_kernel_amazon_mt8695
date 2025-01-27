@@ -77,7 +77,8 @@ static inline struct anon_vma *anon_vma_alloc(void)
 	anon_vma = kmem_cache_alloc(anon_vma_cachep, GFP_KERNEL);
 	if (anon_vma) {
 		atomic_set(&anon_vma->refcount, 1);
-		anon_vma->degree = 1;	/* Reference for first vma */
+		anon_vma->num_children = 0;
+		anon_vma->num_active_vmas = 0;
 		anon_vma->parent = anon_vma;
 		/*
 		 * Initialise the anon_vma root to point to itself. If called
@@ -186,6 +187,7 @@ int anon_vma_prepare(struct vm_area_struct *vma)
 			anon_vma = anon_vma_alloc();
 			if (unlikely(!anon_vma))
 				goto out_enomem_free_avc;
+			anon_vma->num_children++; /* self-parent link for new root */
 			allocated = anon_vma;
 		}
 
@@ -195,8 +197,7 @@ int anon_vma_prepare(struct vm_area_struct *vma)
 		if (likely(!vma->anon_vma)) {
 			vma->anon_vma = anon_vma;
 			anon_vma_chain_link(vma, avc, anon_vma);
-			/* vma reference or self-parent link for new root */
-			anon_vma->degree++;
+			anon_vma->num_active_vmas++;
 			allocated = NULL;
 			avc = NULL;
 		}
@@ -275,19 +276,19 @@ int anon_vma_clone(struct vm_area_struct *dst, struct vm_area_struct *src)
 		anon_vma_chain_link(dst, avc, anon_vma);
 
 		/*
-		 * Reuse existing anon_vma if its degree lower than two,
-		 * that means it has no vma and only one anon_vma child.
+		 * Reuse existing anon_vma if it has no vma and only one
+		 * anon_vma child.
 		 *
-		 * Do not chose parent anon_vma, otherwise first child
-		 * will always reuse it. Root anon_vma is never reused:
+		 * Root anon_vma is never reused:
 		 * it has self-parent reference and at least one child.
 		 */
-		if (!dst->anon_vma && anon_vma != src->anon_vma &&
-				anon_vma->degree < 2)
+		if (!dst->anon_vma &&
+		    anon_vma->num_children < 2 &&
+		    anon_vma->num_active_vmas == 0)
 			dst->anon_vma = anon_vma;
 	}
 	if (dst->anon_vma)
-		dst->anon_vma->degree++;
+		dst->anon_vma->num_active_vmas++;
 	unlock_anon_vma_root(root);
 	return 0;
 
@@ -337,6 +338,7 @@ int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 	anon_vma = anon_vma_alloc();
 	if (!anon_vma)
 		goto out_error;
+	anon_vma->num_active_vmas++;
 	avc = anon_vma_chain_alloc(GFP_KERNEL);
 	if (!avc)
 		goto out_error_free_anon_vma;
@@ -357,7 +359,7 @@ int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 	vma->anon_vma = anon_vma;
 	anon_vma_lock_write(anon_vma);
 	anon_vma_chain_link(vma, avc, anon_vma);
-	anon_vma->parent->degree++;
+	anon_vma->parent->num_children++;
 	anon_vma_unlock_write(anon_vma);
 
 	return 0;
@@ -389,7 +391,7 @@ void unlink_anon_vmas(struct vm_area_struct *vma)
 		 * to free them outside the lock.
 		 */
 		if (RB_EMPTY_ROOT(&anon_vma->rb_root)) {
-			anon_vma->parent->degree--;
+			anon_vma->parent->num_children--;
 			continue;
 		}
 
@@ -397,7 +399,7 @@ void unlink_anon_vmas(struct vm_area_struct *vma)
 		anon_vma_chain_free(avc);
 	}
 	if (vma->anon_vma)
-		vma->anon_vma->degree--;
+		vma->anon_vma->num_active_vmas--;
 	unlock_anon_vma_root(root);
 
 	/*
@@ -408,7 +410,8 @@ void unlink_anon_vmas(struct vm_area_struct *vma)
 	list_for_each_entry_safe(avc, next, &vma->anon_vma_chain, same_vma) {
 		struct anon_vma *anon_vma = avc->anon_vma;
 
-		VM_WARN_ON(anon_vma->degree);
+		VM_WARN_ON(anon_vma->num_children);
+		VM_WARN_ON(anon_vma->num_active_vmas);
 		put_anon_vma(anon_vma);
 
 		list_del(&avc->same_vma);
@@ -1093,9 +1096,9 @@ void page_move_anon_rmap(struct page *page,
 
 /**
  * __page_set_anon_rmap - set up new anonymous rmap
- * @page:	Page to add to rmap
+ * @page:	Page to add to rmap	
  * @vma:	VM area to add page to.
- * @address:	User virtual address of the mapping
+ * @address:	User virtual address of the mapping	
  * @exclusive:	the page is exclusively owned by the current process
  */
 static void __page_set_anon_rmap(struct page *page,
@@ -1324,40 +1327,11 @@ static int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
 	pte_t pteval;
 	spinlock_t *ptl;
 	int ret = SWAP_AGAIN;
-	unsigned long sh_address;
-	bool pmd_sharing_possible = false;
-	unsigned long spmd_start, spmd_end;
 	enum ttu_flags flags = (enum ttu_flags)arg;
 
 	/* munlock has nothing to gain from examining un-locked vmas */
 	if ((flags & TTU_MUNLOCK) && !(vma->vm_flags & VM_LOCKED))
 		goto out;
-
-	/*
-	 * Only use the range_start/end mmu notifiers if huge pmd sharing
-	 * is possible.  In the normal case, mmu_notifier_invalidate_page
-	 * is sufficient as we only unmap a page.  However, if we unshare
-	 * a pmd, we will unmap a PUD_SIZE range.
-	 */
-	if (PageHuge(page)) {
-		spmd_start = address;
-		spmd_end = spmd_start + vma_mmu_pagesize(vma);
-
-		/*
-		 * Check if pmd sharing is possible.  If possible, we could
-		 * unmap a PUD_SIZE range.  spmd_start/spmd_end will be
-		 * modified if sharing is possible.
-		 */
-		adjust_range_if_pmd_sharing_possible(vma, &spmd_start,
-								&spmd_end);
-		if (spmd_end - spmd_start != vma_mmu_pagesize(vma)) {
-			sh_address = address;
-
-			pmd_sharing_possible = true;
-			mmu_notifier_invalidate_range_start(vma->vm_mm,
-							spmd_start, spmd_end);
-		}
-	}
 
 	pte = page_check_address(page, mm, address, &ptl, 0);
 	if (!pte)
@@ -1384,30 +1358,6 @@ static int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
 			goto out_unmap;
 		}
   	}
-
-	/*
-	 * Call huge_pmd_unshare to potentially unshare a huge pmd.  Pass
-	 * sh_address as it will be modified if unsharing is successful.
-	 */
-	if (PageHuge(page) && huge_pmd_unshare(mm, &sh_address, pte)) {
-		/*
-		 * huge_pmd_unshare unmapped an entire PMD page.  There is
-		 * no way of knowing exactly which PMDs may be cached for
-		 * this mm, so flush them all.  spmd_start/spmd_end cover
-		 * this PUD_SIZE range.
-		 */
-		flush_cache_range(vma, spmd_start, spmd_end);
-		flush_tlb_range(vma, spmd_start, spmd_end);
-
-		/*
-		 * The ref count of the PMD page was dropped which is part
-		 * of the way map counting is done for shared PMDs.  When
-		 * there is no other sharing, huge_pmd_unshare returns false
-		 * and we will unmap the actual page and drop map count
-		 * to zero.
-		 */
-		goto out_unmap;
-	}
 
 	/* Nuke the page table entry. */
 	flush_cache_page(vma, address, page_to_pfn(page));
@@ -1503,9 +1453,6 @@ out_unmap:
 	if (ret != SWAP_FAIL && ret != SWAP_MLOCK && !(flags & TTU_MUNLOCK))
 		mmu_notifier_invalidate_page(mm, address);
 out:
-	if (pmd_sharing_possible)
-		mmu_notifier_invalidate_range_end(vma->vm_mm,
-							spmd_start, spmd_end);
 	return ret;
 }
 

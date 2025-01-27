@@ -46,7 +46,6 @@
 #include <linux/oom.h>
 #include <linux/prefetch.h>
 #include <linux/printk.h>
-#include <linux/debugfs.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -2470,7 +2469,7 @@ static bool shrink_zone(struct zone *zone, struct scan_control *sc,
 
 		vmpressure(sc->gfp_mask, sc->target_mem_cgroup,
 			   sc->nr_scanned - nr_scanned,
-			   sc->nr_reclaimed - nr_reclaimed, sc->order);
+			   sc->nr_reclaimed - nr_reclaimed);
 
 		if (sc->nr_reclaimed - nr_reclaimed)
 			reclaimable = true;
@@ -2662,7 +2661,7 @@ retry:
 
 	do {
 		vmpressure_prio(sc->gfp_mask, sc->target_mem_cgroup,
-				sc->priority, sc->order);
+				sc->priority);
 		sc->nr_scanned = 0;
 		zones_reclaimable = shrink_zones(zonelist, sc);
 
@@ -2718,7 +2717,7 @@ retry:
 	return 0;
 }
 
-static bool pfmemalloc_watermark_ok(pg_data_t *pgdat, bool using_kswapd)
+static bool pfmemalloc_watermark_ok(pg_data_t *pgdat)
 {
 	struct zone *zone;
 	unsigned long pfmemalloc_reserve = 0;
@@ -2741,10 +2740,6 @@ static bool pfmemalloc_watermark_ok(pg_data_t *pgdat, bool using_kswapd)
 		return true;
 
 	wmark_ok = free_pages > pfmemalloc_reserve / 2;
-
-	/* The throttled direct reclaimer is now a kswapd waiter */
-	if (unlikely(!using_kswapd && !wmark_ok))
-		atomic_long_inc(&kswapd_waiters);
 
 	/* kswapd must be awake if processes are being throttled */
 	if (!wmark_ok && waitqueue_active(&pgdat->kswapd_wait)) {
@@ -2810,7 +2805,7 @@ static bool throttle_direct_reclaim(gfp_t gfp_mask, struct zonelist *zonelist,
 
 		/* Throttle based on the first usable node */
 		pgdat = zone->zone_pgdat;
-		if (pfmemalloc_watermark_ok(pgdat, gfp_mask & __GFP_KSWAPD_RECLAIM))
+		if (pfmemalloc_watermark_ok(pgdat))
 			goto out;
 		break;
 	}
@@ -2832,18 +2827,16 @@ static bool throttle_direct_reclaim(gfp_t gfp_mask, struct zonelist *zonelist,
 	 */
 	if (!(gfp_mask & __GFP_FS)) {
 		wait_event_interruptible_timeout(pgdat->pfmemalloc_wait,
-			pfmemalloc_watermark_ok(pgdat, true), HZ);
+			pfmemalloc_watermark_ok(pgdat), HZ);
 
 		goto check_pending;
 	}
 
 	/* Throttle until kswapd wakes the process */
 	wait_event_killable(zone->zone_pgdat->pfmemalloc_wait,
-		pfmemalloc_watermark_ok(pgdat, true));
+		pfmemalloc_watermark_ok(pgdat));
 
 check_pending:
-	if (unlikely(!(gfp_mask & __GFP_KSWAPD_RECLAIM)))
-		atomic_long_dec(&kswapd_waiters);
 	if (fatal_signal_pending(current))
 		return true;
 
@@ -3326,7 +3319,7 @@ static unsigned long balance_pgdat(pg_data_t *pgdat, int order,
 		 * able to safely make forward progress. Wake them
 		 */
 		if (waitqueue_active(&pgdat->pfmemalloc_wait) &&
-				pfmemalloc_watermark_ok(pgdat, true))
+				pfmemalloc_watermark_ok(pgdat))
 			wake_up_all(&pgdat->pfmemalloc_wait);
 
 		/*
@@ -3341,8 +3334,7 @@ static unsigned long balance_pgdat(pg_data_t *pgdat, int order,
 			order = sc.order = 0;
 
 		/* Check if kswapd should be suspending */
-		if (try_to_freeze() || kthread_should_stop() ||
-		    !atomic_long_read(&kswapd_waiters))
+		if (try_to_freeze() || kthread_should_stop())
 			break;
 
 		/*

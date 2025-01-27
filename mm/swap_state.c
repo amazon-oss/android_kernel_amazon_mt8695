@@ -19,7 +19,6 @@
 #include <linux/migrate.h>
 
 #include <asm/pgtable.h>
-#include "internal.h"
 
 /*
  * swapper_space is a fiction, retained to simplify the path through
@@ -61,6 +60,21 @@ unsigned long total_swapcache_pages(void)
 }
 
 static atomic_t swapin_readahead_hits = ATOMIC_INIT(4);
+
+/* fosmod_fireos_crash_reporting begin */
+void lmk_add_to_buffer(const char *fmt, ...);
+
+void show_swap_cache_info_lmk(void)
+{
+	lmk_add_to_buffer("%lu pages in swap cache\n", total_swapcache_pages());
+	lmk_add_to_buffer("Swap cache stats: add %lu, delete %lu, find %lu/%lu\n",
+		swap_cache_info.add_total, swap_cache_info.del_total,
+		swap_cache_info.find_success, swap_cache_info.find_total);
+	lmk_add_to_buffer("Free swap  = %ldkB\n",
+		get_nr_swap_pages() << (PAGE_SHIFT - 10));
+	lmk_add_to_buffer("Total swap = %lukB\n", total_swap_pages << (PAGE_SHIFT - 10));
+}
+/* fosmod_fireos_crash_reporting end */
 
 void show_swap_cache_info(void)
 {
@@ -320,7 +334,7 @@ struct page *__read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		/*
 		 * call radix_tree_preload() while we can wait.
 		 */
-		err = radix_tree_maybe_preload(gfp_mask & GFP_RECLAIM_MASK);
+		err = radix_tree_maybe_preload(gfp_mask & GFP_KERNEL);
 		if (err)
 			break;
 

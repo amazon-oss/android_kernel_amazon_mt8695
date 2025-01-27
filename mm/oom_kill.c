@@ -543,13 +543,6 @@ void oom_kill_process(struct oom_control *oc, struct task_struct *p,
 	 * still freeing memory.
 	 */
 	read_lock(&tasklist_lock);
-
-	/*
-	 * The task 'p' might have already exited before reaching here. The
-	 * put_task_struct() will free task_struct 'p' while the loop still try
-	 * to access the field of 'p', so, get an extra reference.
-	 */
-	get_task_struct(p);
 	for_each_thread(p, t) {
 		list_for_each_entry(child, &t->children, sibling) {
 			unsigned int child_points;
@@ -569,7 +562,6 @@ void oom_kill_process(struct oom_control *oc, struct task_struct *p,
 			}
 		}
 	}
-	put_task_struct(p);
 	read_unlock(&tasklist_lock);
 
 	p = find_lock_task_mm(victim);
@@ -685,7 +677,7 @@ bool out_of_memory(struct oom_control *oc)
 	unsigned int uninitialized_var(points);
 	enum oom_constraint constraint = CONSTRAINT_NONE;
 
-	if (oom_killer_disabled || IS_ENABLED(CONFIG_ANDROID_SIMPLE_LMK))
+	if (oom_killer_disabled)
 		return false;
 
 	blocking_notifier_call_chain(&oom_notify_list, 0, &freed);
@@ -758,9 +750,6 @@ void pagefault_out_of_memory(void)
 	};
 
 	if (mem_cgroup_oom_synchronize(true))
-		return;
-
-	if (fatal_signal_pending(current))
 		return;
 
 	if (!mutex_trylock(&oom_lock))
