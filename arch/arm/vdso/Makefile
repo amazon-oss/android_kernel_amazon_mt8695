@@ -15,7 +15,6 @@ VDSO_LDFLAGS += -nostdlib -shared
 VDSO_LDFLAGS += $(call cc-ldoption, -Wl$(comma)--hash-style=sysv)
 VDSO_LDFLAGS += $(call cc-ldoption, -Wl$(comma)--build-id)
 VDSO_LDFLAGS += $(call cc-ldoption, -fuse-ld=bfd)
-VDSO_LDFLAGS += $(call cc-option, -fuse-ld=bfd)
 
 obj-$(CONFIG_VDSO) += vdso.o
 extra-$(CONFIG_VDSO) += vdso.lds

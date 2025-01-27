@@ -473,7 +473,7 @@
 			interrupts = <GIC_SPI 92 IRQ_TYPE_LEVEL_LOW>;
 			clocks = <&pericfg CLK_PERI_UART1_SEL>, <&pericfg CLK_PERI_UART1>;
 			clock-names = "baud", "bus";
-			status = "okay";
+			status = "disabled";
 		};
 
 		uart2: serial@11004000 {
@@ -740,6 +740,8 @@
 		mtk_stc:mtk_stc@11221750 {
 			compatible = "mediatek,mt8695-stc";
 			reg = <0 0x11221750 0 0x40>;
+			clocks = <&topckgen CLK_TOP_OSDPLL>;
+			clock-names = "osdpll";
 		};
 
 		mmc0: mmc@11230000 {
@@ -1468,6 +1470,15 @@
 		clocks = <&topckgen CLK_TOP_GCPU_SEL>;
 		clock-names = "GCPU";
 	};
+
+        firmware: firmware {
+                android: android {
+                        compatible = "android,firmware";
+                        fstab: fstab {
+                                compatible = "android,fstab";
+                        };
+                };
+        };
 
         odm: odm {
                 compatible = "simple-bus";

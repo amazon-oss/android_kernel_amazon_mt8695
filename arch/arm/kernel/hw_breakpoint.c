@@ -631,7 +631,7 @@ int arch_validate_hwbkpt_settings(struct perf_event *bp)
 	info->address &= ~alignment_mask;
 	info->ctrl.len <<= offset;
 
-	if (is_default_overflow_handler(bp)) {
+	if (!bp->overflow_handler) {
 		/*
 		 * Mismatch breakpoints are required for single-stepping
 		 * breakpoints.
@@ -686,12 +686,6 @@ static void disable_single_step(struct perf_event *bp)
 	arch_uninstall_hw_breakpoint(bp);
 	counter_arch_bp(bp)->step_ctrl.enabled = 0;
 	arch_install_hw_breakpoint(bp);
-}
-
-static int watchpoint_fault_on_uaccess(struct pt_regs *regs,
-				       struct arch_hw_breakpoint *info)
-{
-	return !user_mode(regs) && info->ctrl.privilege == ARM_BREAKPOINT_USER;
 }
 
 static void watchpoint_handler(unsigned long addr, unsigned int fsr,
@@ -753,15 +747,6 @@ static void watchpoint_handler(unsigned long addr, unsigned int fsr,
 		}
 
 		pr_debug("watchpoint fired: address = 0x%x\n", info->trigger);
-
-		/*
-		 * If we triggered a user watchpoint from a uaccess routine,
-		 * then handle the stepping ourselves since userspace really
-		 * can't help us with this.
-		 */
-		if (watchpoint_fault_on_uaccess(regs, info))
-			enable_single_step(wp, instruction_pointer(regs));
-
 		perf_bp_event(wp, regs);
 
 		/*
@@ -769,8 +754,9 @@ static void watchpoint_handler(unsigned long addr, unsigned int fsr,
 		 * mismatch breakpoint so we can single-step over the
 		 * watchpoint trigger.
 		 */
-		if (is_default_overflow_handler(wp))
+		if (!wp->overflow_handler)
 			enable_single_step(wp, instruction_pointer(regs));
+
 unlock:
 		rcu_read_unlock();
 	}
