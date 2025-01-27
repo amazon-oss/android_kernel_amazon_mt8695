@@ -55,6 +55,7 @@
 #define ERROR_MTK_CRYPTO_KEY_IDX_NOT_SUPPORT        18
 #define ERROR_MTK_CRYPTO_CTX_BUSY                   19
 
+
 typedef unsigned char GCPU_INST_HANDLE_T;
 
 /* mtk crypto driver context */

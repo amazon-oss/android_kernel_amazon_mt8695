@@ -193,10 +193,6 @@ static size_t vdp_ion_phys_mmu_addr(struct ion_client *client, struct ion_handle
 
 	ion_phys(client, handle, (ion_phys_addr_t *) mva, &size);
 
-#ifdef CONFIG_MTK_CLI_DEBUG_SUPPORT
-	if (vdp_cli_get()->enable_mva_debug)
-		DISP_LOG_E("mva[0x%08x] va:[%p]\n", *mva, ion_map_kernel(client, handle));
-#endif
 	return size;
 }
 
@@ -980,6 +976,9 @@ int disp_vdp_config(struct mtk_disp_buffer *config, struct disp_hw_common_info *
 	struct fence_data fence;
 	bool is_Y_C_independent = false;
 
+	if (!disp_vdp_check_layer_id(config->layer_id, __LINE__))
+		return VDP_FAIL;
+
 	config_buffer_count[config->layer_id]++;
 
 	if ((config->ion_fd >> 16) > 0)
@@ -1413,8 +1412,6 @@ int disp_vdp_irq_handler(uint32_t irq)
 
 		/* non shadow register update */
 		do {
-			/* swap main & sub video */
-			disp_sys_hal_set_main_sub_swap(disp_vdp_get_main_sub_swap_status());
 			disp_vdp_enable_premix_clock(disp_vdp_get_osd_premix());
 		} while(0);
 

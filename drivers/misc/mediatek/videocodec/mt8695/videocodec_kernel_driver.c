@@ -542,6 +542,8 @@ static long vcodec_lockhw(unsigned long arg)
 #if VDEC_CLOSE_DEBUG_CODE
 	VAL_ULONG_T ulFlagsLockHW;
 #endif
+	VAL_ULONG_T handle_id = 0;
+
 	MODULE_MFV_LOGD("VCODEC_LOCKHW + tid = %d\n", current->pid);
 
 	user_data_addr = (VAL_UINT8_T *) arg;
@@ -618,8 +620,14 @@ static long vcodec_lockhw(unsigned long arg)
 			mutex_lock(&VdecHWLock);
 			if (grVcodecDecHWLock.pvHandle == 0) {	/* No one holds dec hw lock now */
 				gu4VdecLockThreadId = current->pid;
+				handle_id = pmem_user_v2p_video((VAL_ULONG_T)rHWLock.pvHandle);
+				if (handle_id == 0) {
+				MODULE_MFV_LOGE("[error] handle is freed at %d\n", __LINE__);
+					mutex_unlock(&VdecHWLock);
+					return -1;
+				}
 				grVcodecDecHWLock.pvHandle =
-				(VAL_VOID_T *) pmem_user_v2p_video((VAL_ULONG_T)rHWLock.pvHandle);
+				(VAL_VOID_T *)handle_id;
 
 				grVcodecDecHWLock.eDriverType = rHWLock.eDriverType;
 				eVideoGetTimeOfDay(&grVcodecDecHWLock.rLockedTime, sizeof(VAL_TIME_T));
@@ -701,6 +709,7 @@ static long vcodec_lat_lockhw(unsigned long arg)
 #if VDEC_CLOSE_DEBUG_CODE
 	VAL_ULONG_T ulFlagsLockHW;
 #endif
+	VAL_ULONG_T handle_id = 0;
 	MODULE_MFV_LOGD("VCODEC_LAT_LOCKHW + tid = %d\n", current->pid);
 
 	user_data_addr = (VAL_UINT8_T *) arg;
@@ -773,8 +782,14 @@ static long vcodec_lat_lockhw(unsigned long arg)
 			mutex_lock(&VdecHWLatLock);
 			if (grVcodecDecHWLaxLock.pvHandle == 0) {	/* No one holds dec hw lock now */
 				gu4VdecLockThreadId = current->pid;
+				handle_id = pmem_user_v2p_video((VAL_ULONG_T)rHWLock.pvHandle);
+				if (handle_id == 0) {
+					MODULE_MFV_LOGE("[error] handle is freed at %d\n", __LINE__);
+					mutex_unlock(&VdecHWLatLock);
+					return -1;
+				}
 				grVcodecDecHWLaxLock.pvHandle =
-				(VAL_VOID_T *) pmem_user_v2p_video((VAL_ULONG_T)rHWLock.pvHandle);
+				(VAL_VOID_T *)handle_id;
 
 				grVcodecDecHWLaxLock.eDriverType = rHWLock.eDriverType;
 				eVideoGetTimeOfDay(&grVcodecDecHWLaxLock.rLockedTime, sizeof(VAL_TIME_T));
@@ -789,7 +804,7 @@ static long vcodec_lat_lockhw(unsigned long arg)
 				bLockedHW = VAL_TRUE;
 				if (eValRet == VAL_RESULT_INVALID_ISR && FirstUseDecHW != 1) {
 					MODULE_MFV_LOGE("[WARNING] reset power/irq when HWLock!!\n");
-					vdec_power_off();
+					vdec_lat_power_off();
 					disable_irq(VDEC_LAT_IRQ_ID);
 				}
 				vdec_lat_power_on();
@@ -849,6 +864,7 @@ static long vcodec_unlockhw(unsigned long arg)
 	VAL_HW_LOCK_T rHWLock;
 	VAL_RESULT_T eValRet;
 	VAL_LONG_T ret;
+	VAL_ULONG_T handle_id = 0;
 
 	MODULE_MFV_LOGD("VCODEC_UNLOCKHW + tid = %d\n", current->pid);
 
@@ -870,8 +886,14 @@ static long vcodec_unlockhw(unsigned long arg)
 		rHWLock.eDriverType == VAL_DRIVER_TYPE_VP9_DEC ||
 		rHWLock.eDriverType == VAL_DRIVER_TYPE_VP8_DEC) {
 		mutex_lock(&VdecHWLock);
+		handle_id = pmem_user_v2p_video((VAL_ULONG_T)rHWLock.pvHandle);
+		if (handle_id == 0) {
+			MODULE_MFV_LOGE("[error] handle is freed at %d\n", __LINE__);
+			mutex_unlock(&VdecHWLock);
+			return -1;
+		}
 		if (grVcodecDecHWLock.pvHandle ==
-			(VAL_VOID_T *) pmem_user_v2p_video((VAL_ULONG_T) rHWLock.pvHandle)) {
+			(VAL_VOID_T *)handle_id) {
 			grVcodecDecHWLock.pvHandle = 0;
 			grVcodecDecHWLock.eDriverType = VAL_DRIVER_TYPE_NONE;
 #ifdef CONFIG_MTK_SEC_VIDEO_PATH_SUPPORT	/* Morris Yang moved to TEE */
@@ -909,6 +931,7 @@ static long vcodec_lat_unlockhw(unsigned long arg)
 	VAL_HW_LOCK_T rHWLock;
 	VAL_RESULT_T eValRet;
 	VAL_LONG_T ret;
+	VAL_ULONG_T handle_id = 0;
 
 	MODULE_MFV_LOGD("VCODEC_LAT_UNLOCKHW + tid = %d\n", current->pid);
 
@@ -925,8 +948,14 @@ static long vcodec_lat_unlockhw(unsigned long arg)
 		rHWLock.eDriverType == VAL_DRIVER_TYPE_H264_DEC ||
 		rHWLock.eDriverType == VAL_DRIVER_TYPE_VP9_DEC) {
 		mutex_lock(&VdecHWLatLock);
+		handle_id = pmem_user_v2p_video((VAL_ULONG_T)rHWLock.pvHandle);
+		if (handle_id == 0) {
+			MODULE_MFV_LOGE("[error] handle is freed at %d\n", __LINE__);
+			mutex_unlock(&VdecHWLatLock);
+			return -1;
+		}
 		if (grVcodecDecHWLaxLock.pvHandle ==
-			(VAL_VOID_T *) pmem_user_v2p_video((VAL_ULONG_T) rHWLock.pvHandle)) {
+			(VAL_VOID_T *)handle_id) {
 			grVcodecDecHWLaxLock.pvHandle = 0;
 			grVcodecDecHWLaxLock.eDriverType = VAL_DRIVER_TYPE_NONE;
 #ifdef CONFIG_MTK_SEC_VIDEO_PATH_SUPPORT	/* Morris Yang moved to TEE */
@@ -968,6 +997,7 @@ static long vcodec_waitisr(unsigned long arg)
 #endif
 	VAL_LONG_T ret;
 	VAL_RESULT_T eValRet;
+	VAL_ULONG_T handle_id = 0;
 
 	MODULE_MFV_LOGD("VCODEC_WAITISR + tid = %d\n", current->pid);
 
@@ -987,8 +1017,14 @@ static long vcodec_waitisr(unsigned long arg)
 		val_isr.eDriverType == VAL_DRIVER_TYPE_VP8_DEC ||
 		val_isr.eDriverType == VAL_DRIVER_TYPE_VP9_DEC) {
 		mutex_lock(&VdecHWLock);
+		handle_id = pmem_user_v2p_video((VAL_ULONG_T) val_isr.pvHandle);
+		if (handle_id == 0) {
+			MODULE_MFV_LOGE("[error] handle is freed at %d\n", __LINE__);
+			mutex_unlock(&VdecHWLock);
+			return -1;
+		}
 		if (grVcodecDecHWLock.pvHandle ==
-			(VAL_VOID_T *) pmem_user_v2p_video((VAL_ULONG_T) val_isr.pvHandle)) {
+			(VAL_VOID_T *)handle_id) {
 			bLockedHW = VAL_TRUE;
 		} else {
 		}
@@ -1032,6 +1068,7 @@ static long vcodec_wait_lat_isr(unsigned long arg)
 #endif
 	VAL_LONG_T ret;
 	VAL_RESULT_T eValRet;
+	VAL_ULONG_T handle_id = 0;
 
 	MODULE_MFV_LOGD("VCODEC_WAIT_LAT_ISR + tid = %d\n", current->pid);
 
@@ -1046,8 +1083,14 @@ static long vcodec_wait_lat_isr(unsigned long arg)
 		val_isr.eDriverType == VAL_DRIVER_TYPE_H264_DEC ||
 		val_isr.eDriverType == VAL_DRIVER_TYPE_VP9_DEC) {
 		mutex_lock(&VdecHWLatLock);
+		handle_id = pmem_user_v2p_video((VAL_ULONG_T) val_isr.pvHandle);
+		if (handle_id == 0) {
+			MODULE_MFV_LOGE("[error] handle is freed at %d\n", __LINE__);
+			mutex_unlock(&VdecHWLatLock);
+			return -1;
+		}
 		if (grVcodecDecHWLaxLock.pvHandle ==
-			(VAL_VOID_T *) pmem_user_v2p_video((VAL_ULONG_T) val_isr.pvHandle)) {
+			(VAL_VOID_T *)handle_id) {
 			bLockedHW = VAL_TRUE;
 		} else {
 		}

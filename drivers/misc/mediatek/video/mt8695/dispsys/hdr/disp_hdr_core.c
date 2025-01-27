@@ -63,6 +63,7 @@ static bool gVideoStartEnable[HDR_PATH_MAX];
 /**/
 static bool gSubVideoCurrentPlayingState;
 struct mutex sync_lock_for_sub_path;
+static HDMI_VIDEO_RESOLUTION current_resolution;
 
 /*
 when plays hdr10+ soure on hdr10+ tv, then play pip video, it needs to new sdr2hdr register for sub video.
@@ -74,6 +75,7 @@ It uses mutex to make sure display configure and stop work independendly.
 */
 
 struct mutex sync_lock_for_disp_configure_and_stop;
+spinlock_t irq_lock;
 
 /*hdr2sdr bt2020 & sdr2hdr clock manager*/
 static bool clockFlag[HDR_CLOCK_MODULE_MAX] = {0};
@@ -1215,6 +1217,7 @@ static int _hdr_core_init(struct disp_hw_common_info *info)
 	gSubVideoCurrentPlayingState = false;
 	mutex_init(&sync_lock_for_sub_path);
 	mutex_init(&sync_lock_for_disp_configure_and_stop);
+	spin_lock_init(&irq_lock);
 	for (path = HDR_PATH_MAIN; path < HDR_PATH_MAX; path++)
 		gFirstConfigure[path] = true;
 
@@ -1250,7 +1253,7 @@ static int _hdr_core_init(struct disp_hw_common_info *info)
 	disp_sys_hal_set_disp_out(DISP_SUB, DISP_OUT_SEL_BT2020);
 #endif
 #endif
-
+	current_resolution = info->resolution->res_mode;
 	return 0;
 }
 
@@ -2084,6 +2087,7 @@ static int _hdr_core_handle_irq(uint32_t irq)
 	int plane;
 	/* if had configured bt2020, disp video out needs to ot need to select bt2020 video out */
 	bool bt2020_need_update = false;
+	unsigned long flags;
 
 	if (irq != DISP_IRQ_FMT_VSYNC)
 		return 0;
@@ -2091,7 +2095,13 @@ static int _hdr_core_handle_irq(uint32_t irq)
 	/* HDR module is not ready, don't handle IRQ */
 	if (gConfigListHeadInit == false)
 		return 0;
-
+	/*
+	 * under very special circumstances,
+	 * when the first vsync arrives, pConfig is not yet
+	 * fully processed, then the second vysnc comes, it will
+	 * result in pConfig being NULL.
+	 */
+	spin_lock_irqsave(&irq_lock, flags);
 	/*  update setting to register. */
 	list_for_each_entry_safe(pConfig, pTempConfig, &gConfigListHead[HDR_PATH_MAIN], listEntry) {
 		HDR_LOG("write HDR path: %d\n", pConfig->path);
@@ -2126,7 +2136,7 @@ static int _hdr_core_handle_irq(uint32_t irq)
 
 		list_del_init(&pConfig->listEntry);
 		}
-
+	spin_unlock_irqrestore(&irq_lock, flags);
 	return 0;
 }
 
@@ -2251,7 +2261,6 @@ int hdr_core_handle_disp_stop(enum HDR_PATH_ENUM path)
 int hdr_core_handle_disp_suspend(void)
 {
 	/* supend all HW */
-	struct config_info_struct *pHdrConfig = NULL;
 	enum HDR_PATH_ENUM path;
 
 #ifdef HDR_SECURE_SUPPORT
@@ -2271,53 +2280,48 @@ int hdr_core_handle_disp_suspend(void)
 
 	gOsdPathSuspend = true;
 	gVideoIsPlaying = false;
-	for (path = HDR_PATH_MAIN; path < HDR_PATH_MAX; path++)
+	for (path = HDR_PATH_MAIN; path < HDR_PATH_MAX; path++) {
 		gVideoStartEnable[path] = false;
+		memset(&gDispBufferInfo[path], 0, sizeof(gDispBufferInfo[0]));
+		memset(&gTVInfo[path], 0, sizeof(gTVInfo[0]));
+		gFirstConfigure[path] = true;
+	}
 	gVideoIsPlayingForSubPathDolbypipHadUsed = false;
 	gVideoIsPlayingForSubPathDolbypip = false;
 	mutex_lock(&sync_lock_for_sub_path);
 	gSubVideoCurrentPlayingState = false;
 	mutex_unlock(&sync_lock_for_sub_path);
 	gSubPathHavestopped = true;
-
-	for (path = HDR_PATH_MAIN; path < HDR_PATH_MAX; path++) {
-		memset(&gDispBufferInfo[path], 0, sizeof(gDispBufferInfo[0]));
-		memset(&gTVInfo[path], 0, sizeof(gTVInfo[0]));
-		gFirstConfigure[path] = true;
-
-		pHdrConfig = vmalloc(sizeof(struct config_info_struct));
-		if (pHdrConfig == NULL) {
-			HDR_ERR("malloc memory failed when do suspend\n");
-			return 0;
-		}
-		memset(pHdrConfig, 0, sizeof(struct config_info_struct));
-		/* fill HDR config according to disp_buffer info & hdmi info */
-		pHdrConfig->path = path;
-
-		pHdrConfig->BT2020Config.need_update = true;
-		pHdrConfig->BT2020Config.inputType.bypassModule = true;
-
-		pHdrConfig->SDR2HDRConfig.need_update = true;
-		pHdrConfig->SDR2HDRConfig.inputType.bypassModule = true;
-
-		pHdrConfig->HDR2SDRConfig.need_update = true;
-		pHdrConfig->HDR2SDRConfig.inputType.bypassModule = true;
-
-		hdr_core_config_path(pHdrConfig);
-		#if 0
-		INIT_WORK(&pHdrConfig->workItem, hdr_core_config_path);
-		queue_work(gHdrThread[path], &pHdrConfig->workItem);
-		#endif
+	if (clockFlag[HDR_CLOCK_MODULE_OSD]) {
+		disp_clock_enable(DISP_CLK_SDR2HDR, false);
+		clockFlag[HDR_CLOCK_MODULE_OSD] = false;
 	}
+
 	return 0;
 }
 
 int hdr_core_handle_disp_resume(void)
 {
+	struct config_info_struct *pHdrConfig = NULL;
+
+	HDR_LOG("resume sdr2hdr hardware\n");
 	gOsdPathSuspend = false;
+	/* free pHdrConfig in the API of hdr_core_handle_clock_path */
+	pHdrConfig = vmalloc(sizeof(struct config_info_struct));
+	if (pHdrConfig == NULL) {
+		HDR_ERR("malloc memory failed when resumed\n");
+		return HDR_STATUS_NULL_POINTER;
+	}
+	memset(pHdrConfig, 0, sizeof(struct config_info_struct));
+	pHdrConfig->path = HDR_PATH_OSD;
+	pHdrConfig->resolution.res_mode = current_resolution;
+	pHdrConfig->BT2020Config.need_update = true;
+	pHdrConfig->BT2020Config.inputType.bypassModule = true;
+	pHdrConfig->SDR2HDRConfig.need_update = true;
+	hdr_core_config_path(pHdrConfig);
+
 	return 0;
 }
-
 
 int hdr_core_handle_other_moudule_call(enum DISP_CMD cmd, void *data)
 {
@@ -2351,6 +2355,13 @@ int hdr_core_handle_other_moudule_call(enum DISP_CMD cmd, void *data)
 	return 0;
 }
 
+static int disp_hdr_change_resolution(const struct disp_hw_resolution *info)
+{
+	current_resolution = info->res_mode;
+	HDR_LOG("change resolution to %x\n", current_resolution);
+
+	return HDR_STATUS_OK;
+}
 
 struct disp_hw disp_hdr_driver = {
 	.name = "hdr",
@@ -2361,7 +2372,7 @@ struct disp_hw disp_hdr_driver = {
 	.suspend = hdr_core_handle_disp_suspend,
 	.resume = hdr_core_handle_disp_resume,
 	.get_info = NULL,
-	.change_resolution = NULL,
+	.change_resolution = disp_hdr_change_resolution,
 	.config = _hdr_core_handle_disp_config, /* config hdr: prepare hdr setting */
 	.irq_handler = _hdr_core_handle_irq, /* update hdr setting */
 	.set_listener = NULL,
