@@ -197,19 +197,6 @@ static int ion_mm_heap_allocate(struct ion_heap *heap,
 	struct ion_mm_buffer_info *buffer_info = NULL;
 	unsigned long user_va = 0;
 
-#ifdef CONFIG_MTK_M4U
-	if (heap->id == ION_HEAP_TYPE_MULTIMEDIA_MAP_MVA) {
-		/*for va-->mva case, align is used for va value*/
-		table = m4u_create_sgtable(align, (unsigned int)size);
-		user_va = align;
-		goto map_mva_exit;
-	}
-#endif
-	if (align > PAGE_SIZE) {
-		IONMSG("%s align %lu is larger than PAGE_SIZE.\n", __func__, align);
-		return -EINVAL;
-	}
-
 	if (size / PAGE_SIZE > totalram_pages / 2) {
 		IONMSG("%s size %lu is larger than totalram_pages.\n", __func__, size);
 		return -ENOMEM;
@@ -250,9 +237,7 @@ static int ion_mm_heap_allocate(struct ion_heap *heap,
 		list_del(&info->list);
 		kfree(info);
 	}
-#ifdef CONFIG_MTK_M4U
-map_mva_exit:
-#endif
+
 	/* create MM buffer info for it */
 	buffer_info = kzalloc(sizeof(*buffer_info), GFP_KERNEL);
 	if (IS_ERR_OR_NULL(buffer_info)) {
@@ -332,12 +317,6 @@ void ion_mm_heap_free(struct ion_buffer *buffer)
 	int i;
 
 	mm_heap_total_memory -= buffer->size;
-#ifdef CONFIG_MTK_M4U
-	if (heap->id == ION_HEAP_TYPE_MULTIMEDIA_MAP_MVA) {
-		ion_mm_heap_free_buffer_info(buffer);
-		return;
-	}
-#endif
 
 	/* uncached pages come from the page pools, zero them before returning*/
 	 /*for security purposes (other allocations are zerod at alloc time */
@@ -422,12 +401,6 @@ static int ion_mm_heap_phys(struct ion_heap *heap, struct ion_buffer *buffer,
 
 	if (((buffer_info->MVA == 0) && (port_info.flags == 0)) ||
 	    ((buffer_info->FIXED_MVA == 0) && (port_info.flags > 0))) {
-#ifdef CONFIG_MTK_M4U
-		if (heap->id == ION_HEAP_TYPE_MULTIMEDIA_MAP_MVA) {
-			port_info.va = (unsigned long)buffer_info->VA;
-			port_info.flags |= M4U_FLAGS_SG_READY;
-		}
-#endif
 		ret = m4u_alloc_mva_sg(&port_info, buffer->sg_table);
 		*(unsigned int *)addr = *(unsigned int *)(port_info.pretmvauf);
 
@@ -538,9 +511,6 @@ static int ion_mm_heap_debug_show(struct ion_heap *heap, struct seq_file *s, voi
 			if ((heap->id == ION_HEAP_TYPE_MULTIMEDIA_FOR_CAMERA) &&
 			    (buffer->heap->id != ION_HEAP_TYPE_MULTIMEDIA_FOR_CAMERA))
 				continue;
-			if ((heap->id == ION_HEAP_TYPE_MULTIMEDIA_MAP_MVA) &&
-			    (buffer->heap->id != ION_HEAP_TYPE_MULTIMEDIA_MAP_MVA))
-				continue;
 			ION_PRINT_LOG_OR_SEQ(s,
 					     "0x%p %8zu %3d %3d %3d %3d %8x %3u %3lu %3d %s 0x%x 0x%x 0x%x 0x%x %s",
 					     buffer, buffer->size, buffer->kmap_cnt, atomic_read(&buffer->ref.refcount),
@@ -588,9 +558,6 @@ static int ion_mm_heap_debug_show(struct ion_heap *heap, struct seq_file *s, voi
 #endif
 				if ((heap->id == ION_HEAP_TYPE_MULTIMEDIA_FOR_CAMERA) &&
 				    (handle->buffer->heap->id != ION_HEAP_TYPE_MULTIMEDIA_FOR_CAMERA))
-					continue;
-				if ((heap->id == ION_HEAP_TYPE_MULTIMEDIA_MAP_MVA) &&
-				    (handle->buffer->heap->id != ION_HEAP_TYPE_MULTIMEDIA_MAP_MVA))
 					continue;
 
 				ION_PRINT_LOG_OR_SEQ(s,
@@ -716,6 +683,73 @@ void ion_mm_heap_memory_detail(void)
 	}
 }
 
+/* fosmod_fireos_crash_reporting begin */
+void lmk_add_to_buffer(const char *fmt, ...);
+
+void ion_mm_heap_memory_detail_lmk(void)
+{
+	struct ion_device *dev = g_ion_device;
+	/* struct ion_heap *heap = NULL; */
+	size_t total_size = 0;
+	size_t total_orphaned_size = 0;
+	struct rb_node *n;
+
+	lmk_add_to_buffer("%16.s(%16.s) %16.s %16.s %s\n",
+			"client", "dbg_name", "pid", "size", "address");
+	lmk_add_to_buffer("----------------------------------------------------\n");
+
+	if (!down_read_trylock(&dev->lock))
+		return;
+	for (n = rb_first(&dev->clients); n; n = rb_next(n)) {
+		struct ion_client
+		*client = rb_entry(n, struct ion_client, node);
+		size_t size = ion_debug_mm_heap_total(client, ION_HEAP_TYPE_MULTIMEDIA);
+
+		if (!size)
+			continue;
+		if (client->task) {
+			char task_comm[TASK_COMM_LEN];
+
+			get_task_comm(task_comm, client->task);
+			lmk_add_to_buffer("%16.s(%16.s) %16u %16zu 0x%p\n",
+					task_comm, client->dbg_name, client->pid, size, client);
+		} else {
+			lmk_add_to_buffer("%16.s(%16.s) %16u %16zu 0x%p\n",
+					client->name, "from_kernel", client->pid, size, client);
+		}
+	}
+	up_read(&dev->lock);
+	lmk_add_to_buffer("----------------------------------------------------\n");
+	lmk_add_to_buffer("orphaned allocations (info is from last known client):" "\n");
+
+	if (mutex_trylock(&dev->buffer_lock)) {
+		for (n = rb_first(&dev->buffers); n; n = rb_next(n)) {
+			struct ion_buffer
+			*buffer = rb_entry(n, struct ion_buffer, node);
+
+			if ((1 << buffer->heap->id) & ION_HEAP_MULTIMEDIA_MASK) {
+				/* heap = buffer->heap; */
+				total_size += buffer->size;
+				if (!buffer->handle_count) {
+					lmk_add_to_buffer("%16.s(%16.s) %16u %16zu %d %d\n", buffer->task_comm,
+							"orphan", buffer->pid, buffer->size, buffer->kmap_cnt,
+							atomic_read(&buffer->ref.refcount));
+					total_orphaned_size += buffer->size;
+				}
+			}
+		}
+		mutex_unlock(&dev->buffer_lock);
+
+		lmk_add_to_buffer("----------------------------------------------------\n");
+		lmk_add_to_buffer("%16.s %16zu\n", "total orphaned", total_orphaned_size);
+		lmk_add_to_buffer("%16.s %16zu\n", "total ", total_size);
+		lmk_add_to_buffer("----------------------------------------------------\n");
+	} else {
+		lmk_add_to_buffer("ion mm heap total memory: %16zu\n", mm_heap_total_memory);
+	}
+}
+/* fosmod_fireos_crash_reporting end */
+
 size_t ion_mm_heap_total_memory(void)
 {
 	return mm_heap_total_memory;
@@ -732,7 +766,7 @@ struct ion_heap *ion_mm_heap_create(struct ion_platform_heap *unused)
 		return ERR_PTR(-ENOMEM);
 	}
 	heap->heap.ops = &system_heap_ops;
-	heap->heap.type = (enum ion_heap_type)ION_HEAP_TYPE_MULTIMEDIA;
+	heap->heap.type = ION_HEAP_TYPE_MULTIMEDIA;
 	/*heap->heap.flags = ION_HEAP_FLAG_DEFER_FREE;*/
 	heap->heap.flags = 0;
 	heap->pools = kcalloc(num_orders, sizeof(struct ion_page_pool *), GFP_KERNEL);
@@ -842,15 +876,31 @@ long ion_mm_ioctl(struct ion_client *client, unsigned int cmd, unsigned long arg
 	struct ion_mm_data param;
 	long ret = 0;
 	/* char dbgstr[256]; */
-	unsigned long ret_copy;
+	unsigned long ret_copy = 0;
 	unsigned int  buffer_sec = 0;
 	enum ion_heap_type buffer_type = 0;
 
 	ION_FUNC_ENTER;
-	if (from_kernel)
+
+	if (!arg) {
+		IONMSG("%s:err arg = NULL. %s(%s),k:%d\n",
+		       __func__, client->name, client->dbg_name, from_kernel);
+		ret = -EINVAL;
+		goto ioctl_out;
+	}
+	if (from_kernel) {
 		param = *(struct ion_mm_data *)arg;
-	else
-		ret_copy = copy_from_user(&param, (void __user *)arg, sizeof(struct ion_mm_data));
+	} else {
+		ret_copy = copy_from_user(&param, (void __user *)arg,
+					  sizeof(struct ion_mm_data));
+		if (ret_copy != 0) {
+			IONMSG("%s:err arg copy failed, ret_copy = %lu. %s(%s),%d, k:%d\n",
+			       __func__, ret_copy, client->name, client->dbg_name,
+			       client->pid, from_kernel);
+			ret = -EFAULT;
+			goto ioctl_out;
+		}
+	}
 
 	switch (param.mm_cmd) {
 	case ION_MM_CONFIG_BUFFER:
@@ -941,7 +991,7 @@ long ion_mm_ioctl(struct ion_client *client, unsigned int cmd, unsigned long arg
 			} else {
 				IONMSG("[ion_heap]: Error. Cannot configure buffer that is not from %c heap.\n",
 				       buffer->heap->type);
-				ret = 0;
+				ret = -EINVAL;
 			}
 			ion_drv_put_kernel_handle(kernel_handle);
 		} else {
@@ -1124,14 +1174,33 @@ long ion_mm_ioctl(struct ion_client *client, unsigned int cmd, unsigned long arg
 	}
 	break;
 	default:
-		IONMSG("[ion_heap]: Error. Invalid command.\n");
+		IONMSG("[ion_heap]: Error. Invalid command(%d).\n", param.mm_cmd);
 		ret = -EFAULT;
 	}
 
-	if (from_kernel)
+	if (ret) {
+		IONMSG("[%s]:failed to finish io-cmd(%d). %s(%s),%d, k:%d\n",
+		       __func__, param.mm_cmd,
+		       client->name, client->dbg_name,
+		       client->pid, from_kernel);
+		goto ioctl_out;
+	}
+
+	if (from_kernel) {
 		*(struct ion_mm_data *)arg = param;
-	else
-		ret_copy = copy_to_user((void __user *)arg, &param, sizeof(struct ion_mm_data));
+	} else {
+		ret_copy =
+		    copy_to_user((void __user *)arg, &param,
+				 sizeof(struct ion_mm_data));
+		if (ret_copy) {
+			IONMSG("%s: copytouser failed, ret = %lu. %s(%s),%d, k:%d\n",
+			       __func__, ret_copy, client->name, client->dbg_name,
+			       client->pid, from_kernel);
+			ret = -EFAULT;
+		}
+	}
+
+ioctl_out:
 	ION_FUNC_LEAVE;
 	return ret;
 }

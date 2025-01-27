@@ -568,10 +568,8 @@ static int pseudo_m4u_sec_init(unsigned int u4NonSecPa,
 					TZPT_VALUE_OUTPUT);
 	ret = KREE_TeeServiceCall(m4u_session, M4U_TZCMD_SEC_INIT,
 			paramTypes, param);
-	if (ret != TZ_RESULT_SUCCESS) {
-		M4UMSG("m4u sec init error 0x%x\n", ret);
-		return -1;
-	}
+	/* For svp. iommu sec memory must be initialized successfully. */
+	BUG_ON(ret != TZ_RESULT_SUCCESS);
 
 	*security_mem_size = param[1].value.a;
 	return 0;
@@ -779,6 +777,10 @@ static int __m4u_alloc_mva(M4U_PORT_ID port, unsigned long va, unsigned int size
 		int i;
 
 		table = kzalloc(sizeof(*table), GFP_KERNEL);
+		if (!table) {
+			M4UMSG("%s %d. alloc fail.\n", __func__, __LINE__);
+			return -ENOMEM;
+		}
 		ret = sg_alloc_table(table, sg_table->nents, GFP_KERNEL);
 		if (ret) {
 			kfree(table);
@@ -831,6 +833,10 @@ static int __m4u_alloc_mva(M4U_PORT_ID port, unsigned long va, unsigned int size
 	*retmva = dma_addr;
 
 	mva_sg = kzalloc(sizeof(*mva_sg), GFP_KERNEL);
+	if (!mva_sg) {
+		M4UMSG("%s %d. alloc fail.\n", __func__, __LINE__);
+		goto err;
+	}
 	mva_sg->table = table;
 	mva_sg->mva = *retmva;
 
@@ -839,12 +845,7 @@ static int __m4u_alloc_mva(M4U_PORT_ID port, unsigned long va, unsigned int size
 	M4UDBG("%s, %d mva is 0x%x, dma_address is 0x%lx, size is 0x%x\n",
 		__func__, __LINE__, mva_sg->mva, (unsigned long)dma_addr, size);
 	return 0;
-#if 0
-err_free_iova:
-	if (iova)
-		__free_iova(iovad, iova);
-	M4UMSG("iommu_map_sg failed\n");
-#endif
+
 err:
 	if (table) {
 		sg_free_table(table);
@@ -1269,7 +1270,7 @@ int __m4u_get_user_pages(int eModuleID, struct task_struct *tsk, struct mm_struc
 				(vma->vm_flags & VM_WRITE), 0, &page, NULL);
 #else
 			ret = get_user_pages(current, current->mm, start, 1,
-				(vma->vm_flags & VM_WRITE) ? FOLL_WRITE : 0, &page, NULL);
+				(vma->vm_flags & VM_WRITE), 0, &page, NULL);
 #endif
 			if (ret == 1)
 				pages[i] = page;
@@ -1321,7 +1322,7 @@ int __m4u_get_user_pages(int eModuleID, struct task_struct *tsk, struct mm_struc
 					(vma->vm_flags & VM_WRITE), 0, &page, NULL);
 #else
 				ret = get_user_pages(current, current->mm, start, 1,
-				(vma->vm_flags & VM_WRITE) ? FOLL_WRITE : 0, &page, NULL);
+				(vma->vm_flags & VM_WRITE), 0, &page, NULL);
 #endif
 				if (ret == 1)
 					pages[i] = page;
@@ -1782,7 +1783,7 @@ struct page *m4u_cache_get_page(unsigned long va)
 
 	start = va & (~M4U_PAGE_MASK);
 	pa = m4u_user_v2p(start);
-	if (pa == 0) {
+	if ((pa == 0)) {
 		M4UMSG("error m4u_get_phys user_v2p return 0 on va=0x%lx\n", start);
 		return NULL;
 	}

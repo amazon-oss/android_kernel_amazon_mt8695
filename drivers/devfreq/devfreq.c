@@ -396,6 +396,11 @@ static int devfreq_notifier_call(struct notifier_block *nb, unsigned long type,
 static void _remove_devfreq(struct devfreq *devfreq)
 {
 	mutex_lock(&devfreq_list_lock);
+	if (IS_ERR(find_device_devfreq(devfreq->dev.parent))) {
+		mutex_unlock(&devfreq_list_lock);
+		dev_warn(&devfreq->dev, "releasing devfreq which doesn't exist\n");
+		return;
+	}
 	list_del(&devfreq->node);
 	mutex_unlock(&devfreq_list_lock);
 
@@ -467,7 +472,6 @@ struct devfreq *devfreq_add_device(struct device *dev,
 	devfreq->dev.parent = dev;
 	devfreq->dev.class = devfreq_class;
 	devfreq->dev.release = devfreq_dev_release;
-	INIT_LIST_HEAD(&devfreq->node);
 	devfreq->profile = profile;
 	strncpy(devfreq->governor_name, governor_name, DEVFREQ_NAME_LEN);
 	devfreq->previous_freq = profile->initial_freq;
@@ -1032,6 +1036,40 @@ static ssize_t trans_stat_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(trans_stat);
 
+static ssize_t load_show(struct device *dev, struct device_attribute *attr,
+			 char *buf)
+{
+	int err;
+	struct devfreq *devfreq = to_devfreq(dev);
+	struct devfreq_dev_status stat = devfreq->last_status;
+	unsigned long freq;
+	ssize_t len;
+
+	err = devfreq_update_stats(devfreq);
+	if (err)
+		return err;
+
+	if (stat.total_time < stat.busy_time) {
+		err = devfreq_update_stats(devfreq);
+		if (err)
+			return err;
+	};
+
+	if (!stat.total_time)
+		return 0;
+
+	len = sprintf(buf, "%lu", stat.busy_time * 100 / stat.total_time);
+
+	if (devfreq->profile->get_cur_freq &&
+		!devfreq->profile->get_cur_freq(devfreq->dev.parent, &freq))
+			len += sprintf(buf + len, "@%luHz\n", freq);
+	else
+		len += sprintf(buf + len, "@%luHz\n", devfreq->previous_freq);
+
+	return len;
+}
+static DEVICE_ATTR_RO(load);
+
 static struct attribute *devfreq_attrs[] = {
 	&dev_attr_governor.attr,
 	&dev_attr_available_governors.attr,
@@ -1042,6 +1080,7 @@ static struct attribute *devfreq_attrs[] = {
 	&dev_attr_min_freq.attr,
 	&dev_attr_max_freq.attr,
 	&dev_attr_trans_stat.attr,
+	&dev_attr_load.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(devfreq);

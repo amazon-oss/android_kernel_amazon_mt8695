@@ -533,6 +533,12 @@ unsigned char fgParserEDID(unsigned char *prbData)
 		HDMI_PLUG_LOG("fgParserEDID FALSE Checksum = 0x%x\n", bTemp);
 		return FALSE;
 	}
+
+	if (i4SharedInfo(SI_EDID_EXT_BLOCK_NO) == 0) {
+		vSetSharedInfo(SI_EDID_VSDB_EXIST, FALSE);
+		_HdmiSinkAvCap.b_sink_support_hdmi_mode = FALSE;
+	}
+
 		_HdmiSinkAvCap.ui2_edid_chksum_and_audio_sup &= ~SINK_BASE_BLK_CHKSUM_ERR;
 
 	/* [3.3] read-back H active line to define EDID resolution */
@@ -1374,13 +1380,14 @@ static void vParser_VendorSpecfic_Data_Block(unsigned char *prData, unsigned cha
 						u23D_MASK_ALL =
 						    (((unsigned short)(b3D_MASK_15_8)) << 8)
 						    | ((unsigned short)(b3D_MASK_7_0));
-					    for (i = 0; i < 0x10; i++) {
-					        if (u23D_MASK_ALL & 0x0001) {
-						    _u4i_3D_VIC |= _ui4First_16_VIC[i];
-						    u23D_MASK_ALL = u23D_MASK_ALL >> 1;
-					        }
-					    }
-                                        }
+					for (i = 0; i < 0x10; i++) {
+					if (u23D_MASK_ALL & 0x0001)
+						_u4i_3D_VIC |= _ui4First_16_VIC[i];
+
+						u23D_MASK_ALL = u23D_MASK_ALL >> 1;
+					}
+					}
+
 				}
 				while (((15 - bLatency_offset +
 					 ((bTemp14 & 0xE0) >> 5)) +
@@ -1683,7 +1690,7 @@ static void vParser_User_Extension_Tag(unsigned char *prData, unsigned char Len)
 				case 0x0004:
 					_HdmiSinkAvCap.ui1_sink_support_dynamic_hdr |= EDID_SUPPORT_HDR10_PLUS;
 					if (type_len >= 3)
-						version = (*(prData + 2 + bIdx + 3)) & 0x0f;
+						version = (*(prData + 2 + bIdx + 3)) && 0x0f;
 					break;
 				default:
 					break;
@@ -1752,6 +1759,8 @@ static void vParser_User_Extension_Tag(unsigned char *prData, unsigned char Len)
 				HDMI_EDID_LOG(" u2svd_420_cmdb = %d\n", u2svd_420_cmdb);
 				for (i = 0; i < 8; i++) {
 					if (u2svd_420_cmdb & 0x0001) {
+						if ((bIdx * 8 + i) >= 128)
+							break;
 					switch (_ui4svd_128_VIC[bIdx * 8 + i] & 0x7f) {
 					case 96:
 					case 106:
@@ -1795,7 +1804,7 @@ void vSetEdidChkError(void)
 
 	HDMI_EDID_FUNC();
 	vSetSharedInfo(SI_EDID_PARSING_RESULT, TRUE);
-	vSetSharedInfo(SI_EDID_VSDB_EXIST, FALSE);
+	vSetSharedInfo(SI_EDID_VSDB_EXIST, TRUE);
 	_HdmiSinkAvCap.b_sink_support_hdmi_mode = TRUE;
 	_HdmiSinkAvCap.ui4_sink_dtd_ntsc_resolution = SINK_480P;	/* 0x1fffff; */
 	_HdmiSinkAvCap.ui4_sink_dtd_pal_resolution = SINK_576P;	/* 0x1fffff; */
@@ -1835,9 +1844,7 @@ void vSetEdidChkError(void)
 	_HdmiSinkAvCap.e_sink_rgb_color_bit = HDMI_SINK_NO_DEEP_COLOR;
 	_HdmiSinkAvCap.e_sink_ycbcr_color_bit = HDMI_SINK_NO_DEEP_COLOR;
 	_HdmiSinkAvCap.ui1_sink_dc420_color_bit = HDMI_SINK_NO_DEEP_COLOR;
-	_HdmiSinkAvCap.ui2_edid_chksum_and_audio_sup =
-	    (SINK_BASIC_AUDIO_NO_SUP | SINK_SAD_NO_EXIST | SINK_BASE_BLK_CHKSUM_ERR |
-	     SINK_EXT_BLK_CHKSUM_ERR);
+	_HdmiSinkAvCap.ui2_edid_chksum_and_audio_sup = 0;
 	_HdmiSinkAvCap.b_sink_edid_ready = FALSE;
 	_HdmiSinkAvCap.ui1_sink_support_dolby_atoms = FALSE;
 	_HdmiSinkAvCap.ui1_sink_support_ai = 0;
@@ -2050,8 +2057,10 @@ void hdmi_checkedid(unsigned char i1noedid)
 				break;
 			}
 
-			if (bTemp == bRetryCount - 1)
+			if (bTemp == bRetryCount - 1) {
 				vSetSharedInfo(SI_EDID_PARSING_RESULT, TRUE);
+				vSetEdidChkError();
+			}
 
 			if (bTemp == bRetryCount - 1)
 				break;

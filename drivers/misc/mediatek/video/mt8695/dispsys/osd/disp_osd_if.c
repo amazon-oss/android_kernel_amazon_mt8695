@@ -987,8 +987,8 @@ int osd_config_sw_register(struct disp_osd_layer_config *osd_overlay_buffer_info
 	uint32_t alpha = osd_overlay_buffer_info->alpha;
 	bool osd_swap = osd_overlay_buffer_info->osd_swap;
 
-	struct ion_handle *ion_handle_1 = osd_overlay_buffer_info->ion_handle;
-	unsigned long va;
+	//struct ion_handle *ion_handle_1 = osd_overlay_buffer_info->ion_handle;
+	//unsigned long va;
 	unsigned int u4src_fmt, fmt_order;
 	uint32_t mix_layer_id;
 
@@ -1177,7 +1177,7 @@ int osd_config_sw_register(struct disp_osd_layer_config *osd_overlay_buffer_info
 
 	i4Ret = OsdFlipPlaneRightNow(u4Plane, fgValidReg, u4Region, 0);
 
-#if 1
+#if 0
 	if (ion_handle_1 != NULL) {
 		va = (unsigned long)ion_map_kernel(osd_ion_client, ion_handle_1);
 		if (u4Plane == OSD_PLANE_1)

@@ -45,6 +45,22 @@
 #include "thermal_core.h"
 #include "thermal_hwmon.h"
 
+#ifdef CONFIG_AMAZON_SIGN_OF_LIFE
+#include <linux/sign_of_life.h>
+#endif
+
+#ifdef CONFIG_AMAZON_METRICS_LOG
+#include <linux/metricslog.h>
+#include <linux/vmalloc.h>
+#ifndef THERMO_METRICS_STR_LEN
+#define THERMO_METRICS_STR_LEN 128
+static struct timespec   prev_time[THERMAL_MAX_TRIPS];
+static struct timespec   trip_start_time[THERMAL_MAX_TRIPS];
+#define VIRTUAL_SENSOR "board_thermal"
+#endif
+#endif
+
+
 MODULE_AUTHOR("Zhang Rui");
 MODULE_DESCRIPTION("Generic thermal management sysfs support");
 MODULE_LICENSE("GPL v2");
@@ -483,6 +499,9 @@ static void handle_critical_trips(struct thermal_zone_device *tz,
 				int trip, enum thermal_trip_type trip_type)
 {
 	int trip_temp;
+#ifdef CONFIG_AMAZON_METRICS_LOG
+		char buf[THERMO_METRICS_STR_LEN + 1];
+#endif
 
 	tz->ops->get_trip_temp(tz, trip, &trip_temp);
 
@@ -496,6 +515,22 @@ static void handle_critical_trips(struct thermal_zone_device *tz,
 		tz->ops->notify(tz, trip, trip_type);
 
 	if (trip_type == THERMAL_TRIP_CRITICAL) {
+#ifdef CONFIG_AMAZON_SIGN_OF_LIFE
+		if (!strncmp(tz->type, "soc_thermal", sizeof("soc_thermal") - 1))
+			life_cycle_set_thermal_shutdown_reason(THERMAL_SHUTDOWN_REASON_SOC);
+		else if (!strncmp(tz->type, "board_thermal", sizeof("board_thermal") - 1) ||
+				 !strncmp(tz->type, "virtual_sensor", sizeof("virtual_sensor") - 1))
+			life_cycle_set_thermal_shutdown_reason(THERMAL_SHUTDOWN_REASON_PCB);
+		else
+			dev_err(&tz->device, "Thermal zone: %s reaching critial", tz->type);
+#endif
+#ifdef CONFIG_AMAZON_METRICS_LOG
+		snprintf(buf, THERMO_METRICS_STR_LEN,
+				"%s,thermal_temp=%d;CT;1,thermal_caught_shutdown=1;CT;1:NR",
+				"thermal_metric_prefix", tz->temperature / 1000);
+		log_to_metrics(ANDROID_LOG_INFO, "ThermalEvent", buf);
+#endif
+
 		dev_emerg(&tz->device,
 			  "critical temperature reached(%d C),shutting down\n",
 			  tz->temperature / 1000);
@@ -508,6 +543,13 @@ static void handle_critical_trips(struct thermal_zone_device *tz,
 static void handle_thermal_trip(struct thermal_zone_device *tz, int trip)
 {
 	enum thermal_trip_type type;
+#ifdef CONFIG_AMAZON_METRICS_LOG
+	int trip_temp, trip_hyst = 0;
+	int prev_trip;
+	struct timespec delta_time;
+	struct timespec current_time;
+	char buf[THERMO_METRICS_STR_LEN + 1];
+#endif
 
 	/* Ignore disabled trip points */
 	if (test_bit(trip, &tz->trips_disabled))
@@ -520,6 +562,69 @@ static void handle_thermal_trip(struct thermal_zone_device *tz, int trip)
 	else
 		handle_non_critical_trips(tz, trip, type);
 
+#ifdef CONFIG_AMAZON_METRICS_LOG
+	tz->ops->get_trip_temp(tz, trip, &trip_temp);
+	tz->ops->get_trip_hyst(tz, trip, &trip_hyst);
+	/* If we have not crossed the trip_temp, we do not care. */
+
+	if (tz->temperature >= trip_temp) {
+#if 0
+		snprintf(buf, THERMO_METRICS_STR_LEN,
+			"%s:%s_trip_%d=%d;CT;1:NR",
+			thermal_metric_prefix, tz->type,
+			trip,
+			tz->temperature / 1000);
+		log_to_metrics(ANDROID_LOG_INFO, "ThermalEvent", buf);
+#endif
+		if (!strncmp(tz->type, VIRTUAL_SENSOR, strlen(VIRTUAL_SENSOR))) {
+			/* We are in upward trend */
+			if (trip_start_time[trip].tv_sec == 0) {
+				pr_notice("ThermalEvent: enter trip%d, curr_temp:%d\n", trip,
+								tz->temperature);
+				getnstimeofday(&trip_start_time[trip]);
+				if (trip != 0) {
+					prev_trip = trip - 1;
+					getnstimeofday(&current_time);
+					delta_time = timespec_sub(current_time,
+									trip_start_time[prev_trip]);
+					trip_start_time[prev_trip].tv_sec = -1;
+					pr_notice("ThermalEvent: exit trip%d, duration %ld s\n",
+									prev_trip,
+									delta_time.tv_sec);
+
+					snprintf(buf, THERMO_METRICS_STR_LEN,
+							"thermzone:def:Throttle_%s_trip%d=%ld;CT;1:NR",
+							tz->type, prev_trip,
+							delta_time.tv_sec);
+					log_to_metrics(ANDROID_LOG_INFO, "ThermalEvent", buf);
+				}
+			}
+		}
+	}
+	if (!strncmp(tz->type, VIRTUAL_SENSOR, strlen(VIRTUAL_SENSOR))) {
+		/* We are in downward trend */
+		if (tz->temperature < (trip_temp - trip_hyst) && tz->last_temperature >= trip_temp) {
+			getnstimeofday(&current_time);
+			delta_time = timespec_sub(current_time, trip_start_time[trip]);
+			pr_notice("ThermalEvent: exit trip%d, duration %ld s\n", trip,
+							delta_time.tv_sec);
+
+			snprintf(buf, THERMO_METRICS_STR_LEN,
+					"thermzone:def:Throttle_%s_trip%d=%ld;CT;1:NR",
+					tz->type, trip,
+					delta_time.tv_sec);
+			log_to_metrics(ANDROID_LOG_INFO, "ThermalEvent", buf);
+
+			trip_start_time[trip].tv_sec = 0;
+			if (trip != 0) {
+				prev_trip = trip - 1;
+				pr_notice("ThermalEvent: entering trip%d, curr_temp:%d\n", prev_trip,
+							tz->temperature);
+				getnstimeofday(&trip_start_time[prev_trip]);
+			}
+		}
+	}
+#endif
 	/*
 	 * Alright, we handled this trip successfully.
 	 * So, start monitoring again.
@@ -631,6 +736,13 @@ static void update_temperature(struct thermal_zone_device *tz)
 	int temp;
 	int ret;
 
+#ifdef CONFIG_AMAZON_METRICS_LOG
+	char buf[THERMO_METRICS_STR_LEN + 1];
+
+	struct timespec  current_time;
+	struct timespec  delta_time;
+#endif
+
 	ret = thermal_zone_get_temp(tz, &temp);
 	if (ret) {
 		if (ret != -EAGAIN)
@@ -644,6 +756,23 @@ static void update_temperature(struct thermal_zone_device *tz)
 	tz->last_temperature = tz->temperature;
 	tz->temperature = temp;
 	mutex_unlock(&tz->lock);
+
+#ifdef CONFIG_AMAZON_METRICS_LOG
+	getnstimeofday(&current_time);
+	delta_time = timespec_sub(current_time, prev_time[tz->id]);
+
+	/* periodically log the thermal value - every 15 min or 15*60 seconds*/
+	if (abs(delta_time.tv_sec) >= 15*60) {
+		memset(buf, 0, sizeof(buf));
+		snprintf(buf, THERMO_METRICS_STR_LEN,
+				"thermzone:def:%s=%d;CT;1:NR",
+				tz->type,
+				tz->temperature/1000);
+		/* Logs to amazon_main log_to_amzmain() is no longer there */
+		log_to_metrics(ANDROID_LOG_INFO, "ThermalEvent", buf);
+		prev_time[tz->id] = current_time;
+	}
+#endif
 
 	trace_thermal_temperature(tz);
 	if (tz->last_temperature == THERMAL_TEMP_INVALID)
@@ -2270,7 +2399,7 @@ unregister:
 EXPORT_SYMBOL_GPL(thermal_zone_device_register);
 
 /**
- * thermal_zone_device_unregister - removes the registered thermal zone device
+ * thermal_device_unregister - removes the registered thermal zone device
  * @tz: the thermal zone device to remove
  */
 void thermal_zone_device_unregister(struct thermal_zone_device *tz)
@@ -2316,7 +2445,7 @@ void thermal_zone_device_unregister(struct thermal_zone_device *tz)
 
 	mutex_unlock(&thermal_list_lock);
 
-	cancel_delayed_work_sync(&tz->poll_queue);
+	thermal_zone_device_set_polling(tz, 0);
 
 	if (tz->type[0])
 		device_remove_file(&tz->device, &dev_attr_type);

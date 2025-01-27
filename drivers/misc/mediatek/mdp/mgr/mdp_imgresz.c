@@ -1,3 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (C) 2023 MediaTek Inc.
+ */
+
 #include <linux/kthread.h>
 #include <linux/wait.h>
 #include <linux/atomic.h>
@@ -55,10 +60,10 @@ void mdp_imgresz_disable_clk_id(int hw_id)
 	if (value == 0) {
 		MDP_LOG("disable HW %d clk\n", hw_id);
 		imgresz_clk_off(hw_id);
-	}
-
-	if (value < 0)
+	} else if (value < 0) {
 		MDP_ERR("imgresz %d enable & disable not match[%d]\n", hw_id, value);
+		atomic_set(&hw_count[hw_id], 0);
+	}
 }
 
 void mdp_imgresz_mgr_task_clk(struct mdp_task_struct *pTask, bool enable_clock)
@@ -298,7 +303,7 @@ enum MDP_TASK_STATUS mdp_imgresz_fill_task(struct mdp_task_struct *pTask)
 		if (p_command_buffer->color_format == DP_COLOR_NV21)
 			need_cbcr_swap = !need_cbcr_swap;
 
-		p_task_src_buffer->buf_info.mem_type = (enum IMGRZ_MEM_ENUM)p_command_buffer->buffer_info.memory_type;
+		p_task_src_buffer->buf_info.mem_type = p_command_buffer->buffer_info.memory_type;
 
 		p_task_src_buffer->buf_info.fd = p_command_buffer->buffer_info.memory_type == DP_MEMORY_SECURE ?
 			p_command_buffer->buffer_info.secureHandle :
@@ -344,7 +349,7 @@ enum MDP_TASK_STATUS mdp_imgresz_fill_task(struct mdp_task_struct *pTask)
 			break;
 		}
 
-		p_task_dst_buffer->buf_info.mem_type = (enum IMGRZ_MEM_ENUM)p_command_buffer->buffer_info.memory_type;
+		p_task_dst_buffer->buf_info.mem_type = p_command_buffer->buffer_info.memory_type;
 
 		p_task_dst_buffer->buf_info.fd = p_command_buffer->buffer_info.memory_type == DP_MEMORY_SECURE ?
 			p_command_buffer->buffer_info.secureHandle :

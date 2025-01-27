@@ -47,6 +47,9 @@
 #ifdef CONFIG_MT6397_MISC
 #include <linux/mfd/mt6397/rtc_misc.h>
 #endif
+#ifdef CONFIG_AMAZON_SIGN_OF_LIFE
+#include <linux/sign_of_life.h>
+#endif
 
 #define WDT_MAX_TIMEOUT		31
 #define WDT_MIN_TIMEOUT		1
@@ -358,6 +361,9 @@ static irqreturn_t mtk_wdt_isr(int irq, void *dev_id)
 {
 	pr_err("fwq mtk_wdt_isr\n");
 
+#ifdef CONFIG_AMAZON_SIGN_OF_LIFE
+	life_cycle_set_boot_reason(WARMBOOT_BY_KERNEL_WATCHDOG);
+#endif
 	wdt_report_info();
 	BUG();
 

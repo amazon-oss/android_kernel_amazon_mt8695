@@ -356,7 +356,6 @@ struct binder_error {
  * @min_priority:         minimum scheduling priority
  *                        (invariant after initialized)
  * @inherit_rt:           inherit RT scheduling policy from caller
- * @txn_security_ctx:     require sender's security context
  *                        (invariant after initialized)
  * @txn_security_ctx:     require sender's security context
  *                        (invariant after initialized)
@@ -1971,6 +1970,18 @@ static int binder_inc_ref_for_node(struct binder_proc *proc,
 	}
 	ret = binder_inc_ref_olocked(ref, strong, target_list);
 	*rdata = ref->data;
+	if (ret && ref == new_ref) {
+		/*
+		 * Cleanup the failed reference here as the target
+		 * could now be dead and have already released its
+		 * references by now. Calling on the new reference
+		 * with strong=0 and a tmp_refs will not decrement
+		 * the node. The new_ref gets kfree'd below.
+		 */
+		binder_cleanup_ref_olocked(new_ref);
+		ref = NULL;
+	}
+
 	binder_proc_unlock(proc);
 	if (new_ref && ref != new_ref)
 		/*
@@ -3120,7 +3131,7 @@ static void binder_transaction(struct binder_proc *proc,
 		t->from = thread;
 	else
 		t->from = NULL;
-	t->sender_euid = task_euid(proc->tsk);
+	t->sender_euid = proc->cred->euid;
 	t->to_proc = target_proc;
 	t->to_thread = target_thread;
 	t->code = tr->code;
@@ -3176,9 +3187,9 @@ static void binder_transaction(struct binder_proc *proc,
 	}
 	if (secctx) {
 		size_t buf_offset = ALIGN(tr->data_size, sizeof(void *)) +
-				    ALIGN(tr->offsets_size, sizeof(void *)) +
-				    ALIGN(extra_buffers_size, sizeof(void *)) -
-				    ALIGN(secctx_sz, sizeof(u64));
+			ALIGN(tr->offsets_size, sizeof(void *)) +
+			ALIGN(extra_buffers_size, sizeof(void *)) -
+			ALIGN(secctx_sz, sizeof(u64));
 		char *kptr = t->buffer->data + buf_offset;
 
 		t->security_ctx = (uintptr_t)kptr +
@@ -4165,7 +4176,7 @@ retry:
 			e->cmd = BR_OK;
 			ptr += sizeof(uint32_t);
 
-			binder_stat_br(proc, thread, e->cmd);
+			binder_stat_br(proc, thread, cmd);
 		} break;
 		case BINDER_WORK_TRANSACTION_COMPLETE: {
 			binder_inner_proc_unlock(proc);
@@ -4631,20 +4642,23 @@ static int binder_thread_release(struct binder_proc *proc,
 	}
 
 	/*
-	 * If this thread used poll, make sure we remove the waitqueue from any
-	 * poll data structures holding it.
+	 * If this thread used poll, make sure we remove the waitqueue
+	 * from any epoll data structures holding it with POLLFREE.
+	 * waitqueue_active() is safe to use here because we're holding
+	 * the inner lock.
 	 */
-	if (thread->looper & BINDER_LOOPER_STATE_POLL)
-		wake_up_pollfree(&thread->wait);
+	if ((thread->looper & BINDER_LOOPER_STATE_POLL) &&
+	    waitqueue_active(&thread->wait)) {
+		wake_up_poll(&thread->wait, POLLHUP | POLLFREE);
+	}
 
 	binder_inner_proc_unlock(thread->proc);
 
 	/*
-	 * This is needed to avoid races between wake_up_pollfree() above and
-	 * someone else removing the last entry from the queue for other reasons
-	 * (e.g. ep_remove_wait_queue() being called due to an epoll file
-	 * descriptor being closed).  Such other users hold an RCU read lock, so
-	 * we can be sure they're done after we call synchronize_rcu().
+	 * This is needed to avoid races between wake_up_poll() above and
+	 * and ep_remove_waitqueue() called for other reasons (eg the epoll file
+	 * descriptor being closed); ep_remove_waitqueue() holds an RCU read
+	 * lock, so we can be sure it's done after calling synchronize_rcu().
 	 */
 	if (thread->looper & BINDER_LOOPER_STATE_POLL)
 		synchronize_rcu();

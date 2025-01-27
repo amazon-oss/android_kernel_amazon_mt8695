@@ -678,6 +678,7 @@ retry:
 		r->initialized = 1;
 		r->entropy_total = 0;
 		if (r == &nonblocking_pool) {
+			prandom_reseed_late();
 			process_random_ready_list();
 			wake_up_all(&urandom_init_wait);
 			pr_notice("random: %s pool is initialized\n", r->name);
@@ -922,6 +923,7 @@ void add_interrupt_randomness(int irq, int irq_flags)
 
 	fast_mix(fast_pool);
 	add_interrupt_bench(cycles);
+	this_cpu_add(net_rand_state.s1, fast_pool->pool[cycles & 3]);
 
 	if ((fast_pool->count < 64) &&
 	    !time_after(now, fast_pool->last + HZ))
@@ -1823,6 +1825,9 @@ unsigned int get_random_int(void)
 	__u32 *hash;
 	unsigned int ret;
 
+	if (arch_get_random_int(&ret))
+		return ret;
+
 	hash = get_cpu_var(get_random_int_hash);
 
 	hash[0] += current->pid + jiffies + random_get_entropy();
@@ -1841,6 +1846,9 @@ unsigned long get_random_long(void)
 {
 	__u32 *hash;
 	unsigned long ret;
+
+	if (arch_get_random_long(&ret))
+		return ret;
 
 	hash = get_cpu_var(get_random_int_hash);
 
