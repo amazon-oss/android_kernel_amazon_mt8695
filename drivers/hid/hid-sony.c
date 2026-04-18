@@ -2509,6 +2509,24 @@ static inline void sony_cancel_work_sync(struct sony_sc *sc)
 	}
 }
 
+static void dualshock4_set_default_calibration(struct sony_sc *sc)
+{
+	int i;
+
+	sc->ds4_calib_data[0].abs_code = ABS_RX;
+	sc->ds4_calib_data[1].abs_code = ABS_RY;
+	sc->ds4_calib_data[2].abs_code = ABS_RZ;
+	sc->ds4_calib_data[3].abs_code = ABS_X;
+	sc->ds4_calib_data[4].abs_code = ABS_Y;
+	sc->ds4_calib_data[5].abs_code = ABS_Z;
+
+	for (i = 0; i < 6; i++) {
+		sc->ds4_calib_data[i].bias = 0;
+		sc->ds4_calib_data[i].sens_numer = 1;
+		sc->ds4_calib_data[i].sens_denom = 1;
+	}
+}
+
 static int sony_input_configured(struct hid_device *hdev,
 					struct hid_input *hidinput)
 {
@@ -2622,7 +2640,11 @@ static int sony_input_configured(struct hid_device *hdev,
 		sony_init_output_report(sc, sixaxis_send_output_report);
 	} else if (sc->quirks & DUALSHOCK4_CONTROLLER) {
 		ret = dualshock4_get_calibration_data(sc);
-		if (ret < 0) {
+		if (ret == -EIO) {
+			hid_err(hdev, "Failed to get calibration data from Dualshock 4, using empty values\n");
+			dualshock4_set_default_calibration(sc);
+		}
+		else if (ret < 0) {
 			hid_err(hdev, "Failed to get calibration data from Dualshock 4\n");
 			goto err_stop;
 		}
