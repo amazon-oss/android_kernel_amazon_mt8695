@@ -13,4 +13,10 @@
 
 # Connectivity combo driver
 obj-$(CONFIG_MTK_BT_MT7663_SDIO) += bt_mt7663_sdio/
-obj-$(CONFIG_MTK_WIFI_MT7663_SDIO) += wlan/
+ifeq ($(CONFIG_MTK_WIFI_MT7663_SDIO),y)
+ifeq ($(CONFIG_MTK_COMBO_CHIP_MT7668),y)
+obj-y += wlan_mt76x8/
+else
+obj-y += wlan/
+endif
+endif
