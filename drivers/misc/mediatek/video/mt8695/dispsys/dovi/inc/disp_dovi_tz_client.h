@@ -37,7 +37,6 @@ enum DOVI_TZ_CALL_CMD {
 	DOVI_TZ_CALL_CMD_MD_PARSER_MAIN,
 	DOVI_TZ_CALL_CMD_MD_PARSER_UNINIT,
 	DOVI_TZ_CALL_CMD_CP_TEST_INIT,
-	DOVI_TZ_CALL_CMD_FIND_RPU_BUFFER,
 	DOVI_TZ_CALL_CMD_CP_TEST_MAIN,
 	DOVI_TZ_CALL_CMD_CP_TEST_UNINIT,
 	DOVI_TZ_CALL_CMD_SHARE_MEMORY_INIT,
@@ -81,8 +80,7 @@ struct dovi_share_memory_info_t {
 	uint32_t log_level;
 	uint32_t sec_handle_in;
 	uint32_t sec_handle_out;
-	unsigned int len_tmp;
-	unsigned int sec_handle_len;
+	uint32_t sec_handle_len;
 	bool profile4;
 };
 
@@ -101,12 +99,10 @@ enum dovi_status dovi_sec_share_memory_init(void);
 enum dovi_status dovi_sec_md_parser_init(void);
 enum dovi_status dovi_sec_md_parser_uninit(void);
 enum dovi_status dovi_sec_cp_test_init(void);
-enum dovi_status dovi_sec_find_rpu_buffer(uint32_t sec_handle, uint32_t len);
 enum dovi_status dovi_sec_cp_test_main(void);
 enum dovi_status dovi_sec_cp_test_uninit(void);
 enum dovi_status dovi_sec_status(void);
 enum dovi_status dovi_sec_debug_level_init(uint32_t dovi_tz_level);
-enum dovi_status dovi_sec_sec_handle_copy(uint32_t *sec_handle, uint32_t len);
 
 #if defined(CONFIG_MTK_IN_HOUSE_TEE_SUPPORT) || defined(CONFIG_TRUSTY)
 #define DOVI_TZ_OK 1

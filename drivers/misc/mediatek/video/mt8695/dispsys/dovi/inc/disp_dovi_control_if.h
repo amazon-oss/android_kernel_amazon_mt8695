@@ -70,8 +70,6 @@ struct cp_param_t {
 	int src_fps;
 	int use_ll;
 	int ll_rgb_desired;
-	int test_mode;
-	int support_el;
 	int dovi2hdr10_mapping;
 	char vsvdb_file[MAX_FILENAME_LENGTH];
 	unsigned char vsvdb_hdmi[0x1A];

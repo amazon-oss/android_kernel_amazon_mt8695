@@ -1255,15 +1255,10 @@ int disp_vdp_config(struct mtk_disp_buffer *config, struct disp_hw_common_info *
 		memset(&dovi_md_info->buff, 0, DOVI_MD_MAX_LEN);
 
 		if (dovi_md_info->svp) {
-			/* store rpu data into tz buffers, not transmit to dovi process immediately */
-			dovi_sec_find_rpu_buffer(dolby_info->sec_handle, dolby_info->len);
+			dovi_md_info->sec_handle = dolby_info->sec_handle;
 
-			/* get rpu handle from tz buffers */
-			dovi_md_info->sec_handle = dovi_share_mem->sec_handle_out;
-			dovi_md_info->len = dolby_info->len;
-
-			vdp_printf(VDP_DOVI_LOG, "dovi frm pts %lld rpu pts %lld len %d sec_handle 0x%x new sec_handle:%d\n",
-			config->pts, dolby_info->pts, dolby_info->len, dolby_info->sec_handle, dovi_md_info->sec_handle);
+			vdp_printf(VDP_DOVI_LOG, "dovi frm pts %lld rpu pts %lld len %d sec_handle 0x%x\n",
+			config->pts, dolby_info->pts, dolby_info->len, dolby_info->sec_handle);
 		} else {
 			vdp_printf(VDP_DOVI_LOG, "dovi frm pts %lld rpu pts %lld len %d addr %p\n",
 			config->pts, dolby_info->pts, dolby_info->len, dolby_info->addr);
@@ -1529,4 +1524,3 @@ struct disp_hw *disp_vdp_get_drv(void)
 {
 	return &disp_vdp_driver;
 }
-

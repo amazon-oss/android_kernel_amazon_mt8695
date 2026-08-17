@@ -214,18 +214,14 @@ UINT32 dovi_set_priority_mode(UINT32 mode)
 
 UINT32 dovi_set_test_mode(int mode)
 {
-	p_cp_param->test_mode = mode;
-
-	dovi_default("set_test_mode %d\n", p_cp_param->test_mode);
+	dovi_default("set_test_mode %d (stub)\n", mode);
 
 	return DOVI_RET_OK;
 }
 
 UINT32 dovi_set_support_el(int value)
 {
-	p_cp_param->support_el = value;
-
-	dovi_default("set_support_el %d\n", p_cp_param->support_el);
+	dovi_default("set_support_el %d (stub)\n", value);
 
 	return DOVI_RET_OK;
 }
