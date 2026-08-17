@@ -437,6 +437,7 @@ static int _disp_set_cmd(enum DISP_CMD cmd, void *data)
 
 static int _disp_event_callback(enum DISP_EVENT event, void *data)
 {
+	uint32_t force_hdr;
 	HDMI_VIDEO_RESOLUTION res_mode = HDMI_VIDEO_RESOLUTION_NUM;
 	const struct disp_hw_resolution *resolution;
 
@@ -459,8 +460,14 @@ static int _disp_event_callback(enum DISP_EVENT event, void *data)
 	case DISP_EVENT_FORCE_HDR:
 		_get_hdmi_cap(&mgr->common_info.tv);
 		disp_hw_mgr_get_info(&disp_common_info);
-		mgr->common_info.tv.force_hdr = *(unsigned int *)data;
-		_disp_set_cmd(DISP_CMD_DOVI_FULL_VS10, data);
+		force_hdr = *((uint32_t *)data);
+		if (force_hdr == HDMI_FORCE_DEFAULT)
+			// hack: rewrite HDMI_FORCE_DEFAULT to HDMI_FORCE_HDR to remain in dovi path (VS10)
+			// only FORCE_DEFAULT and FORCE_SDR disable VS10; ignore FORCE_SDR for now
+			force_hdr = HDMI_FORCE_HDR;
+
+		mgr->common_info.tv.force_hdr = force_hdr;
+		_disp_set_cmd(DISP_CMD_DOVI_FULL_VS10, &force_hdr);
 		break;
 
 	case DISP_EVENT_PLUG_OUT:
